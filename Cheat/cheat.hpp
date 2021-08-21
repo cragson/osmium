@@ -9,8 +9,6 @@ class cheat
 
 public:
 
-	virtual ~cheat() = 0;
-
 	virtual bool setup_features() = 0;
 
 	virtual bool setup_offsets() = 0;
@@ -28,7 +26,7 @@ public:
 		return this->m_features.size();
 	}
 
-private:
+protected:
 
 	std::vector< std::unique_ptr < feature > > m_features;
 };
