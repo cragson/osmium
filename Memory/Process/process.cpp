@@ -10,7 +10,6 @@ bool process::refresh_image_map(const DWORD process_id)
 		return false;
 
 	// after successfully retrieving my snapshot handle, I clear the map - to get rid of the old images + information
-	// no memory leak should occur because I wrapped my imageinfo_t structs in a smart ptr
 	this->m_images.clear();
 
 	if (Module32First(snapshot_handle, &me32))

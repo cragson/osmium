@@ -68,6 +68,23 @@ public:
 		) != 0;
 	}
 
+	template < typename T >
+	bool write_to_protected_memory( std::uintptr_t address, T value, size_t size = sizeof( T ) )
+	{
+		if( !this->is_process_ready() )
+			return false;
+
+		DWORD buffer = 0;
+
+		if( !VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, PAGE_EXECUTE_READWRITE, &buffer ) )
+			return false;
+
+		if( WriteProcessMemory( this->m_handle, reinterpret_cast< LPVOID >( address ), &value, sizeof( value ), nullptr ) == 0 )
+			return false;
+		
+		return VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, buffer, &buffer ) != 0;
+	}
+
 
 	[[nodiscard]] bool refresh_image_map(const DWORD process_id = 0);
 
