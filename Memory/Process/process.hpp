@@ -3,7 +3,12 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
-#include "../image_x64/image_x64.hpp"
+
+#ifdef _WIN64
+#include "../Image_x64/image_x64.hpp"
+#else
+#include "../Image_x86/image_x86.hpp"
+#endif
 
 class process
 {
@@ -134,7 +139,11 @@ public:
 		}
 	}
 
-	[[nodiscard]] image_x64* get_image_ptr_by_name(const std::wstring& image_name) const noexcept
+#ifdef _WIN64
+	[[nodiscard]] image_x64* get_image_ptr_by_name( const std::wstring& image_name ) const noexcept
+#else
+	[[nodiscard]] image_x86* get_image_ptr_by_name( const std::wstring& image_name ) const noexcept
+#endif
 	{
 		if (!this->does_image_exist_in_map(image_name))
 			return nullptr;
@@ -175,7 +184,11 @@ public:
 
 		for (auto& image : this->m_images)
 			printf(
+#ifdef _WIN64
 				"[+] %-25ls | 0x%llX | 0x%llX | %d.\n",
+#else
+				"[+] %-25ls | 0x%08X | 0x%08X | %d.\n",
+#endif
 				image.first.c_str(),
 				image.second->get_image_base(),
 				image.second->get_image_size(),
@@ -199,7 +212,11 @@ public:
 				return;
 
 			printf(
+#ifdef _WIN64
 				"[+] %-25ls | 0x%llX | 0x%llX | %d.\n",
+#else
+				"[+] %-25ls | 0x%08X | 0x%08X | %d.\n",
+#endif
 				image.first.c_str(),
 				image.second->get_image_base(),
 				image.second->get_image_size(),
@@ -229,5 +246,10 @@ private:
 
 	DWORD m_pid;
 
+#ifdef _WIN64
 	std::unordered_map< std::wstring, std::unique_ptr< image_x64 > > m_images;
+#else
+	std::unordered_map< std::wstring, std::unique_ptr< image_x86 > > m_images;
+#endif
+	
 };

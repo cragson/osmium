@@ -25,8 +25,11 @@ bool process::refresh_image_map(const DWORD process_id)
 			const auto image_size = static_cast<size_t>(me32.modBaseSize);
 
 			// create a new object for the image name, which is the key for the map
-			this->m_images[me32.szModule] = std::make_unique< image_x64 >(image_base, image_size);
-
+#ifdef _WIN64
+			this->m_images[me32.szModule] = std::make_unique< image_x64 >( image_base, image_size );
+#else
+			this->m_images[me32.szModule] = std::make_unique< image_x86 >( image_base, image_size );
+#endif
 			// now dump the image from memory and write it into the specific byte_vector
 			// if the image could not be read, like RPM sets 299 as the error code
 			// the image will be removed from the map
