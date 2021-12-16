@@ -74,6 +74,8 @@ public:
 
 	[[nodiscard]] std::uintptr_t find_pattern(const std::wstring& pattern, const bool should_be_relative = true );
 
+	[[nodiscard]] std::vector< std::uintptr_t > find_all_pattern_occurences( const std::wstring& pattern, const bool should_be_relative = true );
+
 	///-------------------------------------------------------------------------------------------------
 	/// <summary> This function is used for dereferencing the bytes from the byte_vector. </summary>
 	///
