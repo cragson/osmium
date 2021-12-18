@@ -53,11 +53,28 @@ public:
 
 
 	template < typename T >
-	T read(std::uintptr_t address, size_t size_of_read = sizeof(T))
+	T read( const std::uintptr_t address, size_t size_of_read = sizeof( T ) )
 	{
 		T buffer;
-		ReadProcessMemory(this->m_handle, reinterpret_cast<LPCVOID>(address), &buffer, size_of_read, nullptr);
+		ReadProcessMemory( this->m_handle, reinterpret_cast< LPCVOID >( address ), &buffer, size_of_read, nullptr );
 		return buffer;
+	}
+
+	[[nodiscard]] inline std::string read_ascii_null_terminated_string( const std::uintptr_t address )
+	{
+		std::string ret = {};
+
+		auto stringptr = address;
+
+		char c = {};
+
+		while( ( c = this->read< char >( stringptr++ ) ) != '\0' )
+			if ( c >= 32 && c < 127 )
+				ret += c;
+			else
+				return "OSMIUM_NO_ASCII";
+
+		return ret;
 	}
 
 

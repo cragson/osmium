@@ -100,7 +100,37 @@ public:
 		return buffer;
 	}
 
-	void print_memory_region( const std::uintptr_t start_addr, const size_t size, const bool is_absolute_addr )
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Reads an nullterminated string from an address inside the image.</summary>
+	///
+	/// <remarks>cragson, 12/17/21.</remarks>
+	///
+	/// <param name="address">	  	The address of the string inside the image.</param>
+	/// <param name="is_relative">	(Optional) If the address is absolute (base+offset) or is relative (offset). By default this parameter is false.</param>
+	///
+	/// <returns>The string read from the address.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] inline std::string read_string_from_address( const std::uintptr_t address, const bool is_relative = false )
+	{
+		if( address < this->m_base || address > this->m_base + this->m_size )
+			return "OSMIUM_INVALID_ADDRESS";
+
+		std::string ret = {};
+
+		char c = {};
+
+		auto stringptr = is_relative
+		? this->deref_address< std::uintptr_t >( address )
+		: this->deref_address< std::uintptr_t >( address - this->m_base );
+
+		while( ( c = this->deref_address< char >( stringptr++ ) ) != '\0'  )
+			ret += c;
+
+		return ret;
+	}
+
+	void print_memory_region( const std::uintptr_t start_addr, const size_t size, const bool is_absolute_addr ) const
 	{
 		if ( start_addr < 0 || start_addr > this->m_base + this->m_size )
 			return;

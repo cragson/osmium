@@ -132,8 +132,6 @@ std::vector< std::uintptr_t > image_x86::find_all_pattern_occurences( const std:
 				if ( i == vector_size - 1 )
 				{
 					found_addresses.push_back( should_be_relative ? current_addr : this->m_base + current_addr );
-
-					wprintf( L"[!] Found pattern: %s at 0x%08X\n", pattern.c_str(), current_addr );
 					
 					current_addr += i;
 
