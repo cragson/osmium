@@ -6,32 +6,34 @@
 class feature
 {
 public:
-	feature()
-	{
-		this->m_status = false;
-		this->m_virtualkey_code = int32_t();
-		this->m_timepoint = std::chrono::high_resolution_clock::now();
-		this->m_activation_delay = uint32_t();
-		this->m_was_activated = false;
-		this->m_name = std::wstring();
-		this->m_print_status = false;
-	}
+	feature() :
+	m_status( false ),
+	m_virtualkey_code( int32_t() ),
+	m_timepoint( std::chrono::high_resolution_clock::now() ),
+	m_activation_delay( uint32_t() ),
+	m_was_activated( false ),
+	m_name( std::wstring() ),
+	m_print_status( false )
+	{}
 
-	feature(const bool _status, const int32_t _vk_code, const uint32_t _delay) : m_status(_status), m_virtualkey_code(_vk_code), m_activation_delay(_delay)
-	{
-		this->m_timepoint = std::chrono::high_resolution_clock::now();
+	feature( const bool status, const int32_t vk_code, const uint32_t delay ) :
+		m_status( status ),
+		m_virtualkey_code( vk_code ),
+		m_timepoint( std::chrono::high_resolution_clock::now() ),
+		m_activation_delay( delay ),
+		m_was_activated( false) ,
+		m_name( std::wstring() ),
+		m_print_status( false )
+	{}
 
-		this->m_was_activated = false;
-	}
-
-	feature( const std::wstring & _name ) : feature()
+	explicit feature( const std::wstring & name ) : feature()
 	{
-		this->m_name = _name;
+		this->m_name = name;
 	}
 
 	inline void print_status() const
 	{
-		printf( "[%ws] is %s!\n", this->m_name.c_str(), this->m_status ? "enabled" : "disabled" );
+		wprintf( L"[%ws] is %ws!\n", this->m_name.c_str(), this->m_status ? L"enabled" : L"disabled" );
 	}
 
 	[[nodiscard]] bool is_active() const noexcept
