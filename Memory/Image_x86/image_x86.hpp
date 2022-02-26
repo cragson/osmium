@@ -154,11 +154,11 @@ public:
 				// prepare right side, which should be ascii chars etc
 				const auto rs_value = std::to_integer< uint8_t >( current_byte );
 				
-				right_side += std::format( "{} ", ( rs_value >= 33 && rs_value < 127 ) ? static_cast< char >( rs_value ) : static_cast< char >( 46 ) );
+				right_side += std::format( "{} ", rs_value >= 33 && rs_value < 127 ? static_cast< char >( rs_value ) : static_cast< char >( 46 ) );
 			}
 
 			// print now the current line and a newline
-			printf( "%-25s | %s\n", left_side.c_str(), right_side.c_str() );
+			printf( "0x%0X | %-32s | %s\n", start_addr + idx, left_side.c_str(), right_side.c_str() );
 
 			// reset now both side strings
 			left_side = "";

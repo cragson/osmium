@@ -1,6 +1,30 @@
 #include "process.hpp"
 #include <TlHelp32.h>
 
+struct window_cb_args
+{
+	DWORD target_pid;
+	HWND target_hwnd;
+};
+
+BOOL CALLBACK hwnd_cb(HWND hWnd, LPARAM lparam)
+{
+	DWORD pid = DWORD();
+
+	GetWindowThreadProcessId(hWnd, &pid);
+
+	const auto args = reinterpret_cast<window_cb_args*>(lparam);
+
+	if (pid == args->target_pid)
+	{
+		args->target_hwnd = hWnd;
+
+		return FALSE;
+	}
+
+	return TRUE;
+};
+
 bool process::refresh_image_map(const DWORD process_id)
 {
 	MODULEENTRY32 me32 = { sizeof(MODULEENTRY32) };
@@ -46,34 +70,86 @@ bool process::refresh_image_map(const DWORD process_id)
 	return true;
 }
 
-bool process::setup_process(const std::wstring& window_name)
+
+bool process::setup_process(const std::wstring& process_identifier, const bool is_process_name)
 {
-	// First try to retrieve a window handle, the process id and a handle to the process with specific rights.
-	if (window_name.empty())
+	if (process_identifier.empty())
 		return false;
 
-	const auto window_handle = FindWindowW(nullptr, window_name.c_str());
-	if (!window_handle)
-		return false;
+	auto window_handle = HWND();
+	auto buffer = DWORD();
+	auto proc_handle = INVALID_HANDLE_VALUE;
 
-	DWORD buffer = 0;
-	if (!GetWindowThreadProcessId(window_handle, &buffer))
-		return false;
+	// if the given process identifier is not a process name but a window title 
+	// try to retrieve a window handle, the process id and a handle to the process with specific rights.
+	if( !is_process_name )
+	{
+		window_handle = FindWindowW( nullptr, process_identifier.c_str() );
+		if ( !window_handle )
+			return false;
 
-	const auto proc_handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, buffer);
-	if (!proc_handle)
-		return false;
+		if ( !GetWindowThreadProcessId( window_handle, &buffer ) )
+			return false;
+
+		proc_handle = OpenProcess( PROCESS_ALL_ACCESS, FALSE, buffer );
+		if ( !proc_handle )
+			return false;
+
+	}
+	// if the process identifier is a process name
+	// use it for retrieving the process id first
+	else
+	{
+		// Some quick note: Cz the project is lacking some proper documentation I want to describe the behaviour of the method here a bit better
+		// I want to iterate above the different process entries and search for the first entry which matches my identifier
+		// I take the PID from the first match and retrieve the window and process handle from it
+		const auto snapshot_handle = CreateToolhelp32Snapshot( TH32CS_SNAPPROCESS, NULL );
+		if( !snapshot_handle )
+			return false;
+
+		auto pe32 = PROCESSENTRY32();
+		pe32.dwSize = sizeof( PROCESSENTRY32 );
+
+		if( Process32First( snapshot_handle, &pe32 ) )
+		{
+			do
+			{
+				if( const auto wprocess_name = std::wstring( pe32.szExeFile ); wprocess_name == process_identifier )
+				{
+					buffer = pe32.th32ProcessID;
+
+					break;
+				}
+			} while( Process32Next( snapshot_handle, &pe32 ) );
+		}
+		else
+			return false;
+
+		// now I got the pid and I need to open a handle to the process
+		proc_handle = OpenProcess( PROCESS_ALL_ACCESS, FALSE, buffer );
+		if ( !proc_handle )
+			return false;
+
+		// The last needed thing is the window handle
+		window_cb_args args = { buffer, HWND() };
+
+		EnumWindows( hwnd_cb, reinterpret_cast< LPARAM >( &args ) );
+
+		if ( !args.target_hwnd )
+			return false;
+
+		// Now I can go out of the else block and just let the values be set
+	}
 
 	// set now the correct data
 	// Because refresh_image_map will call RPM which uses m_handle
-	// if the call 
 	this->m_hwnd = window_handle;
 	this->m_pid = buffer;
 	this->m_handle = proc_handle;
 
 	// Before I set the retrieved data, I want to safe information about every image in the process
 	// So I iterate over every image loaded into the certain process and store them :)
-	if (!this->refresh_image_map(buffer))
+	if ( !this->refresh_image_map( buffer ) )
 	{
 		// because I need the correct handle in this function, I need to take care of the case where the handle is correct but images cannot be dumped
 		// so clear the retrieved data about the process here, if the function fails
@@ -87,6 +163,46 @@ bool process::setup_process(const std::wstring& window_name)
 	return true;
 }
 
+
+
+bool process::setup_process( const DWORD process_id )
+{
+	// try to open a handle to the process 
+	const auto handle = OpenProcess( PROCESS_ALL_ACCESS, FALSE, process_id );
+
+	if( !handle )
+		return false;
+
+	// now I got the valid handle, I try to receive a handle to the main window of the process
+	window_cb_args args = { process_id, HWND() };
+
+	EnumWindows( hwnd_cb, reinterpret_cast< LPARAM >( &args ) );
+
+	if( !args.target_hwnd )
+		return false;
+
+	// set now the correct data
+	this->m_hwnd = args.target_hwnd;
+
+	this->m_pid = process_id;
+
+	this->m_handle = handle;
+
+	// Before I set the retrieved data, I want to safe information about every image in the process
+	// So I iterate over every image loaded into the certain process and store them :)
+	if ( !this->refresh_image_map( process_id ) )
+	{
+		// because I need the correct handle in this function, I need to take care of the case where the handle is correct but images cannot be dumped
+		// so clear the retrieved data about the process here, if the function fails
+		this->m_hwnd = nullptr;
+		this->m_pid = 0;
+		this->m_handle = INVALID_HANDLE_VALUE;
+
+		return false;
+	}
+
+	return true;
+}
 
 bool process::patch_bytes(const byte_vector& bytes, const std::uintptr_t address, const size_t size)
 {
