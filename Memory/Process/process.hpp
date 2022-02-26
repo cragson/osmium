@@ -3,6 +3,7 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <ranges>
 
 #ifdef _WIN64
 #include "../Image_x64/image_x64.hpp"
@@ -110,7 +111,9 @@ public:
 
 	[[nodiscard]] bool refresh_image_map(const DWORD process_id = 0);
 
-	[[nodiscard]] bool setup_process(const std::wstring& window_name);
+	[[nodiscard]] bool setup_process(const std::wstring& process_identifier, const bool is_process_name = true );
+
+	[[nodiscard]] bool setup_process( const DWORD process_id );
 
 
 	[[nodiscard]] std::uintptr_t get_image_base(const std::wstring& image_name) const noexcept
@@ -168,6 +171,17 @@ public:
 		return this->m_images.at(image_name).get();
 	}
 
+#ifdef _WIN64
+	[[nodiscard]] image_x64* get_first_image_ptr() const noexcept
+#else
+	[[nodiscard]] image_x86* get_first_image_ptr() const noexcept
+#endif
+	{
+		if( this->m_images.empty() )
+			return nullptr;
+
+		return this->m_images.begin()->second.get();
+	}
 
 	[[nodiscard]] size_t get_map_size() const noexcept
 	{
@@ -176,15 +190,15 @@ public:
 
 	[[nodiscard]] double get_map_size_in_mbytes() const noexcept
 	{
-		if (this->m_images.empty())
+		if ( this->m_images.empty() )
 			return double();
 
 		auto size = 0.0;
 
 		constexpr auto divider = 1024.0 * 1024.0;
 
-		for (const auto& image : this->m_images)
-			size += static_cast<double>(image.second->get_image_size() / divider);
+		for ( const auto& image : this->m_images | std::views::values )
+			size += image->get_image_size() / divider;
 
 		return size;
 	}
@@ -199,17 +213,17 @@ public:
 	{
 		printf("[#] Image-Name | Image-Base | Image-Size | Is-Executable\n");
 
-		for (auto& image : this->m_images)
+		for (auto& [image_name, image_ptr] : this->m_images)
 			printf(
 #ifdef _WIN64
 				"[+] %-25ls | 0x%llX | 0x%llX | %d.\n",
 #else
-				"[+] %-25ls | 0x%08X | 0x%08X | %d.\n",
+				"[+] %-32ls | 0x%08X | 0x%08X | %d.\n",
 #endif
-				image.first.c_str(),
-				image.second->get_image_base(),
-				image.second->get_image_size(),
-				image.second->is_executable()
+				image_name.c_str(),
+				image_ptr->get_image_base(),
+				image_ptr->get_image_size(),
+				image_ptr->is_executable()
 			);
 		printf("\n\n");
 	}
@@ -223,7 +237,7 @@ public:
 
 		size_t counter = 0;
 
-		for (auto& image : this->m_images)
+		for (auto& [image_name, image_ptr] : this->m_images)
 		{
 			if (counter == num_of_images)
 				return;
@@ -232,12 +246,12 @@ public:
 #ifdef _WIN64
 				"[+] %-25ls | 0x%llX | 0x%llX | %d.\n",
 #else
-				"[+] %-25ls | 0x%08X | 0x%08X | %d.\n",
+				"[+] %-32ls | 0x%08X | 0x%08X | %d.\n",
 #endif
-				image.first.c_str(),
-				image.second->get_image_base(),
-				image.second->get_image_size(),
-				image.second->is_executable()
+				image_name.c_str(),
+				image_ptr->get_image_base(),
+				image_ptr->get_image_size(),
+				image_ptr->is_executable()
 			);
 
 			counter++;
