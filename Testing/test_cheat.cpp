@@ -1,7 +1,5 @@
 #include "test_cheat.hpp"
 
-#include "test_feature.hpp"
-
 #include <Windows.h>
 
 bool test_cheat::setup_features()

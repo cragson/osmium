@@ -1,6 +1,6 @@
 #include "test_overlay.hpp"
 
-#include "globals.hpp"
+#include "../Includings/modules.hpp"
 
 void test_overlay::render()
 {
@@ -11,7 +11,7 @@ void test_overlay::render()
 
 	if( fg_hwnd == this->m_TargetWindow )
 	{
-		const auto features = Globals::g_pCheat->get_features_as_ptr();
+		const auto features = Modules::g_pCheat->get_features_as_ptr();
 
 		for( auto it = features->begin(); it != features->end(); ++it )
 		{
