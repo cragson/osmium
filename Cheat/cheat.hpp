@@ -26,6 +26,11 @@ public:
 		return this->m_features.size();
 	}
 
+	[[nodiscard]] inline std::vector< std::unique_ptr< feature > > * get_features_as_ptr() noexcept
+	{
+		return &this->m_features;
+	}
+
 protected:
 
 	std::vector< std::unique_ptr < feature > > m_features;

@@ -11,21 +11,31 @@
 #include "../Image_x86/image_x86.hpp"
 #endif
 
+#include "../Hook/hook.hpp"
+
 class process
 {
 public:
-	process()
-	{
-		this->m_handle = INVALID_HANDLE_VALUE;
-		this->m_hwnd = nullptr;
-		this->m_pid = 0;
-	}
+
+	process() :
+		m_handle( INVALID_HANDLE_VALUE ),
+		m_hwnd( HWND() ),
+		m_pid( DWORD() )
+		//m_images( {} ),
+		//m_hooks( {} )
+	{}
 
 
 	~process()
 	{
+		// make sure no handle is leaked when leaving
 		if (this->m_handle)
 			CloseHandle(this->m_handle);
+
+		// make sure no memory will be leaked, by unhooking existent hooks
+		if( !this->m_hooks.empty() )
+			for( const auto & hk : this->m_hooks )
+				this->destroy_hook_x86( hk->get_hook_address() );
 	}
 
 
@@ -91,6 +101,16 @@ public:
 		) != 0;
 	}
 
+	[[nodiscard]] DWORD change_protection_of_memory_block( const std::uintptr_t address, const size_t size, const DWORD protection ) const
+	{
+		DWORD buffer = 0;
+
+		if ( !VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, protection, &buffer ) )
+			return NULL;
+
+		return buffer;
+	}
+
 	template < typename T >
 	bool write_to_protected_memory( std::uintptr_t address, T value, size_t size = sizeof( T ) )
 	{
@@ -108,6 +128,29 @@ public:
 		return VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, buffer, &buffer ) != 0;
 	}
 
+	[[nodiscard]] inline LPVOID allocate_rwx_page_in_process( const size_t page_size = 4096 ) const
+	{
+		const auto ret = VirtualAllocEx( 
+			this->m_handle, 
+			nullptr, 
+			page_size, 
+			MEM_COMMIT | MEM_RESERVE, 
+			PAGE_EXECUTE_READWRITE );
+
+		return ret;
+	}
+
+	[[nodiscard]] inline LPVOID allocate_page_in_process( const DWORD page_protection, const size_t page_size = 4096 ) const
+	{
+		const auto ret = VirtualAllocEx(
+			this->m_handle,
+			nullptr,
+			page_size,
+			MEM_COMMIT | MEM_RESERVE,
+			page_protection );
+
+		return ret;
+	}
 
 	[[nodiscard]] bool refresh_image_map(const DWORD process_id = 0);
 
@@ -267,7 +310,30 @@ public:
 
 	bool nop_bytes(std::uintptr_t address, size_t size);
 
-	[[nodiscard]] bool read_image(byte_vector* dest_vec, const std::wstring& image_name);
+	[[nodiscard]] bool read_image(byte_vector* dest_vec, const std::wstring& image_name) const;
+
+	[[nodiscard]] bool create_hook_x86( const std::uintptr_t start_address, const size_t size, const std::vector< uint8_t >& shellcode );
+
+	[[nodiscard]] bool destroy_hook_x86( const std::uintptr_t start_address );
+
+	[[nodiscard]] inline size_t get_size_of_hooks() const noexcept
+	{
+		return this->m_hooks.size();
+	}
+
+	[[nodiscard]] inline hook* get_hook_ptr_by_address(const std::uintptr_t start_address_of_hook) const
+	{
+		for (const auto& hook : this->m_hooks)
+			if (hook->get_hook_address() == start_address_of_hook)
+				return hook.get();
+
+		return nullptr;
+	}
+
+	[[nodiscard]] inline auto get_hooks_ptr() noexcept
+	{
+		return &this->m_hooks;
+	}
 
 
 private:
@@ -282,5 +348,6 @@ private:
 #else
 	std::unordered_map< std::wstring, std::unique_ptr< image_x86 > > m_images;
 #endif
-	
+
+	std::vector< std::unique_ptr< hook > > m_hooks;
 };
