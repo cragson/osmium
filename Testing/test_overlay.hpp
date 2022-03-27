@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../osmium/Overlay/overlay.hpp"
+#include "../Overlay/overlay.hpp"
 
 class test_overlay : public overlay
 {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../osmium/Cheat/cheat.hpp"
+#include "../Cheat/cheat.hpp"
 
 class test_cheat : public cheat
 {
