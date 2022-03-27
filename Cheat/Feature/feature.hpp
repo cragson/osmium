@@ -7,13 +7,14 @@ class feature
 {
 public:
 	feature() :
-	m_status( false ),
-	m_virtualkey_code( int32_t() ),
-	m_timepoint( std::chrono::high_resolution_clock::now() ),
-	m_activation_delay( uint32_t() ),
-	m_was_activated( false ),
-	m_name( std::wstring() ),
-	m_print_status( false )
+		m_status( false ),
+		m_virtualkey_code( int32_t() ),
+		m_timepoint( std::chrono::high_resolution_clock::now() ),
+		m_activation_delay( uint32_t() ),
+		m_was_activated( false ),
+		m_name( std::wstring() ),
+		m_print_status( false ),
+		m_should_draw( false )
 	{}
 
 	feature( const bool status, const int32_t vk_code, const uint32_t delay ) :
@@ -23,7 +24,8 @@ public:
 		m_activation_delay( delay ),
 		m_was_activated( false) ,
 		m_name( std::wstring() ),
-		m_print_status( false )
+		m_print_status( false ),
+		m_should_draw( false )
 	{}
 
 	explicit feature( const std::wstring & name ) : feature()
@@ -211,6 +213,26 @@ public:
 		this->m_print_status = !this->m_print_status;
 	}
 
+	[[nodiscard]] inline bool should_be_drawn() const noexcept
+	{
+		return this->m_should_draw;
+	}
+
+	void enable_drawing() noexcept
+	{
+		this->m_should_draw = true;
+	}
+
+	void disable_drawing() noexcept
+	{
+		this->m_should_draw = false;
+	}
+
+	void toggle_drawing() noexcept
+	{
+		this->m_should_draw = !this->m_should_draw;
+	}
+
 	virtual void tick() = 0;
 
 	virtual void on_enable() = 0;
@@ -219,6 +241,7 @@ public:
 
 	virtual void on_first_activation() = 0;
 
+	virtual void on_render() = 0;
 
 protected:
 	bool m_status;
@@ -234,4 +257,6 @@ protected:
 	std::wstring m_name;
 
 	bool m_print_status;
+
+	bool m_should_draw;
 };
