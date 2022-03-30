@@ -6,6 +6,13 @@
 
 #include "../Testing/test_cheat.hpp"
 
+///-------------------------------------------------------------------------------------------------
+// namespace: Modules
+//
+// summary:	This namespace contains Implementations of the cheat, overlay and process.
+//			Personally I use this, so I don't have to implement for every cheat again. I just put the Testing folder on .gitignore :D
+///-------------------------------------------------------------------------------------------------
+
 namespace Modules
 {
 	inline std::unique_ptr< process > g_pProcess = std::make_unique< process >();
