@@ -12,6 +12,12 @@ class image_x86
 
 public:
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Default constructor.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///-------------------------------------------------------------------------------------------------
+
 	image_x86()
 	{
 		this->m_base = std::uintptr_t();
@@ -20,6 +26,15 @@ public:
 
 		this->m_bytes = byte_vector();
 	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Constructor.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///
+	/// <param name="image_base">	The image base.</param>
+	/// <param name="image_size">	Size of the image.</param>
+	///-------------------------------------------------------------------------------------------------
 
 	image_x86(const std::uintptr_t image_base, const size_t image_size)
 	{
@@ -31,25 +46,65 @@ public:
 		this->m_bytes.reserve(image_size);
 	}
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Gets image base.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///
+	/// <returns>The image base.</returns>
+	///-------------------------------------------------------------------------------------------------
+
 	[[nodiscard]] inline std::uintptr_t get_image_base() const noexcept
 	{
 		return this->m_base;
 	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Gets image size.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///
+	/// <returns>The image size.</returns>
+	///-------------------------------------------------------------------------------------------------
 
 	[[nodiscard]] inline size_t get_image_size() const noexcept
 	{
 		return this->m_size;
 	}
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Queries if the byte vector is empty.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///
+	/// <returns>True if the byte vector is empty, false if not.</returns>
+	///-------------------------------------------------------------------------------------------------
+
 	[[nodiscard]] inline bool is_byte_vector_empty() const noexcept
 	{
 		return this->m_bytes.empty();
 	}
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Gets a pointer to the byte vector, where all bytes from the dumped image are stored.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///
+	/// <returns>Null if it fails, else the byte vector pointer.</returns>
+	///-------------------------------------------------------------------------------------------------
+
 	[[nodiscard]] inline byte_vector* get_byte_vector_ptr() noexcept
 	{
 		return &this->m_bytes;
 	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Gets pointer to first byte of the byte vector, where all bytes from the dumped image are stored.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///
+	/// <returns>Null if it fails, else the pointer to first byte of the byte vector.</returns>
+	///-------------------------------------------------------------------------------------------------
 
 	[[nodiscard]] inline std::byte* get_ref_to_first_byte() noexcept
 	{
@@ -59,6 +114,14 @@ public:
 
 		return &this->m_bytes.front();
 	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Checks if the dumped image is an executable, by checking if the MZ signature is valid.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///
+	/// <returns>True if executable, false if not.</returns>
+	///-------------------------------------------------------------------------------------------------
 
 	[[nodiscard]] inline bool is_executable() const noexcept
 	{
@@ -72,7 +135,29 @@ public:
 		return std::memcmp(reinterpret_cast<LPCVOID>(&this->m_bytes.at(0)), reinterpret_cast<LPCVOID>(&MZ_SIGNATURE), sizeof(std::byte) * 2) == 0;
 	}
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Searches for an byte pattern in the vector of bytes from the dumped image.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///
+	/// <param name="pattern">			 	Specifies the pattern.</param>
+	/// <param name="should_be_relative">	(Optional) True if the result address should be relative.</param>
+	///
+	/// <returns>The first found pattern match address.</returns>
+	///-------------------------------------------------------------------------------------------------
+
 	[[nodiscard]] std::uintptr_t find_pattern(const std::wstring& pattern, const bool should_be_relative = true );
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Searches for all byte pattern occurences inside the dumped image.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///
+	/// <param name="pattern">			 	Specifies the pattern.</param>
+	/// <param name="should_be_relative">	(Optional) True if the result addresses should be relative.</param>
+	///
+	/// <returns>An vector of addresses where the byte pattern could be matched inside the dumped image.</returns>
+	///-------------------------------------------------------------------------------------------------
 
 	[[nodiscard]] std::vector< std::uintptr_t > find_all_pattern_occurences( const std::wstring& pattern, const bool should_be_relative = true );
 
@@ -129,6 +214,16 @@ public:
 
 		return ret;
 	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>This functions prints a hexdump of the memory region to the console.</summary>
+	///
+	/// <remarks>cragson, 03/30/22.</remarks>
+	///
+	/// <param name="start_addr">	   	The start address of the dump.</param>
+	/// <param name="size">			   	The number of bytes, which should be dumped.</param>
+	/// <param name="is_absolute_addr">	True if the address on the left should be absolute, false if not.</param>
+	///-------------------------------------------------------------------------------------------------
 
 	void print_memory_region( const std::uintptr_t start_addr, const size_t size, const bool is_absolute_addr ) const
 	{

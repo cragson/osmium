@@ -25,11 +25,11 @@ BOOL CALLBACK hwnd_cb(HWND hWnd, LPARAM lparam)
 	return TRUE;
 };
 
-bool process::refresh_image_map(const DWORD process_id)
+bool process::refresh_image_map()
 {
 	MODULEENTRY32 me32 = { sizeof(MODULEENTRY32) };
 
-	const auto snapshot_handle = CreateToolhelp32Snapshot(TH32CS_SNAPALL, process_id);
+	const auto snapshot_handle = CreateToolhelp32Snapshot(TH32CS_SNAPALL, this->m_pid);
 	if (!snapshot_handle)
 		return false;
 
@@ -150,7 +150,7 @@ bool process::setup_process(const std::wstring& process_identifier, const bool i
 
 	// Before I set the retrieved data, I want to safe information about every image in the process
 	// So I iterate over every image loaded into the certain process and store them :)
-	if ( !this->refresh_image_map( buffer ) )
+	if ( !this->refresh_image_map() )
 	{
 		// because I need the correct handle in this function, I need to take care of the case where the handle is correct but images cannot be dumped
 		// so clear the retrieved data about the process here, if the function fails
@@ -191,7 +191,7 @@ bool process::setup_process( const DWORD process_id )
 
 	// Before I set the retrieved data, I want to safe information about every image in the process
 	// So I iterate over every image loaded into the certain process and store them :)
-	if ( !this->refresh_image_map( process_id ) )
+	if ( !this->refresh_image_map() )
 	{
 		// because I need the correct handle in this function, I need to take care of the case where the handle is correct but images cannot be dumped
 		// so clear the retrieved data about the process here, if the function fails
