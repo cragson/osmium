@@ -64,12 +64,9 @@ DWORD WINAPI ThreadProc( LPVOID lpParam )
 	params.BackBufferFormat = D3DFMT_A8R8G8B8;
 	params.BackBufferHeight = this_ptr->get_overlay_height();
 	params.BackBufferWidth = this_ptr->get_overlay_width();
-	params.EnableAutoDepthStencil = true;
-	params.AutoDepthStencilFormat = D3DFMT_D16;
-	params.MultiSampleQuality = D3DMULTISAMPLE_NONE;
 	params.SwapEffect = D3DSWAPEFFECT_DISCARD;
 	params.hDeviceWindow = this_ptr->get_overlay_window_handle();
-	params.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+	params.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
 
 	auto device_ptr = this_ptr->get_device_as_ptr();
 
@@ -200,7 +197,7 @@ bool overlay::create_window_overlay()
 		ret, 
 		RGB(0, 0, 0), 
 		255, 
-		LWA_COLORKEY | LWA_ALPHA
+		LWA_ALPHA
 	);
 
 	if( !ret2 )
@@ -359,7 +356,7 @@ void overlay::draw_line( const int32_t x, const int32_t y, const int32_t x2, con
 
 	this->m_Line->SetWidth( 1 );
 
-	this->m_Line->Draw( Line, 5, D3DCOLOR_ARGB( 255, red, green, blue ) );
+	this->m_Line->Draw( Line, 2, D3DCOLOR_ARGB( 255, red, green, blue ) );
 }
 
 void overlay::draw_filled_rect(const int32_t x, const int32_t y, const int32_t width, const int32_t height, const int32_t red, const int32_t green, const int32_t blue)
