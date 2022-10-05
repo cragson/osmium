@@ -31,6 +31,11 @@
         -   [How to allocate a memory page inside of the target process with specific rights](#how-to-allocate-a-memory-page-inside-of-the-target-process-with-specific-rights)
         -   [How to create a x86 hook](#how-to-create-a-x86-hook)
         -   [How to destroy a x86 hook](#how-to-destroy-a-x86-hook)
+        -   [Inter-Process communication (IPC)](#inter-process-communication-ipc)
+            - [How to setup named shared memory x86](#how-to-setup-named-shared-memory-x86)
+            - [How to read and write from/to the shared memory x86](#how-to-read-and-write-fromto-the-shared-memory-x86)
+            - [How to clear the shared memory buffer x86](#how-to-clear-the-shared-memory-x86)
+            - [How to remove named shared memory x86](#how-to-remove-named-shared-memory-x86)
     - [**Basic overlay implementation**](#basic-overlay-implementation)
         -   [How to setup your overlay](#how-to-setup-your-overlay)
         -   [How to draw a string](#how-to-draw-a-string)
@@ -832,6 +837,98 @@ The framework contains the following modules:
                 printf( "[!] MAYDAY MAYDAY error hello hi hallo holla bonjour!\n" );
         }
         ```
+    - ### **Inter-Process Communication (IPC)**
+        - ### **How to setup named shared memory x86**
+            First you need a object name for the Named Shared Memory, if you want to use a "Global\\XXX" name: **Make sure to have the proper rights on both sides (cheat and game process)**, otherwise the function will **fail**!
+            After that you need to know the size of the buffer, which will be split into HIGH- and LOW side. Both sides are DWORDs.
+            First the function will check if the object name is empty or if already an instance with the same object name exists, if so the function returns **false**.
+            After that these steps will be done:
+            1. Get the image Base of Kernel32
+            2. Get the addresses of CreateFileMappingA and MapViewOfFile
+            3. Allocate a small buffer inside the target process for the return values of the called functions inside the target process and the object name string
+            4. Write the object name string into the allocated memory
+            5. Prepare now the shellcode with it's data (addresses and parameters)
+            6. Execute now the shellcode inside the target process
+            7. Read now the return values from the target process called functions (object handle and view address)
+            8. Open the file mapping handle with OpenFileMappingA
+            9. Map now the view of the mapped file into the address space of the callee process
+            10. Create the shared memory instance
+            11. Push it to the std::vector inside process
+            12. Free the allocated memory page for the return values and the object name string
+
+            So tl;dr here is some sample code for you, how to setup a shared memory instance:
+            ```cpp
+            printf( "[#] Creating a shared memory instance.." );
+			if ( Globals::g_pProcess->create_shared_memory_instance_x86( "Local\\osmium_sh", 0, 0x100 ) )
+			{
+				printf( "success!\n" );
+
+				const auto sh_inst = Globals::g_pProcess->get_shared_memory_instance_by_object_name( "Local\\osmium_sh" );
+
+				const auto sh_ptr = sh_inst->get_buffer_ptr();
+
+				printf( "[+] Wrote to %p (callee), remote buffer @ %p\n", sh_ptr, sh_inst->get_process_buffer_ptr() );
+            }
+            else
+                printf( "failed!\n" );
+            ```
+
+            So what happens here is a Named Shared Memory with the object name **Local\\osmium_sh** and a total buffer size of **0x100** will be created. If it was successfully created, a pointer to the freshly created shared memory instance will be retrieved and also a pointer to the shared memory buffer from the callee process.
+        - ### **How to read and write from/to the shared memory x86**
+            I implemented some methods for reading or writing but you can do it easily on your own, if you want.
+            Just retrieve the pointer to the buffer from the callee process via **get_buffer_ptr()** from **shared_memory_instance** and treat it like a normal pointer. I'll show both ways now in this sample code:
+            ```cpp
+            printf( "[#] Creating a shared memory instance.." );
+			if ( Globals::g_pProcess->create_shared_memory_instance_x86( "Local\\osmium_sh", 0, 0x100 ) )
+			{
+				printf( "success!\n" );
+
+				const auto sh_inst = Globals::g_pProcess->get_shared_memory_instance_by_object_name( "Local\\osmium_sh" );
+
+				const auto sh_ptr = sh_inst->get_buffer_ptr();
+
+				printf( "[+] Wrote to %p (callee), remote buffer @ %p\n", sh_ptr, sh_inst->get_process_buffer_ptr() );
+
+                sh_inst->write_string( "iloveasm" );
+
+				sh_inst->write< float >( 1337.123f, 0x20 );
+
+				*reinterpret_cast< size_t* >( sh_ptr + 0x42 ) = 0x13376077;
+
+				for( auto i = 0; i < 9; i++ )
+					printf( "[+] Read from 0x%d (%08X): %c\n", i, sh_ptr + i, sh_inst->read< const char >( sh_ptr + i ) );
+
+				printf( "[+] Read from 0x20: %.3f\n", sh_inst->read< float >( sh_ptr + 0x20 ) );
+
+				printf( "[+] Read from 0x42: %04X\n", *reinterpret_cast< size_t* >( sh_ptr + 0x42 ) );
+            }
+            else
+                printf( "failed!\n" );
+            ```
+            This snippet will produce the following output: ![sh-rw-test](res/sh-rw-test.png)
+        - ### **How to clear the shared memory x86**
+            If you want to zero the whole shared memory buffer, just use **clear_memory()** from **shared_memory_instance**.
+            Or you can just call memset, because the function **clear_memory** just does it like this.
+            ```cpp
+            void clear_memory() const
+            {
+                memset( this->m_pBuffer, 0, this->m_iBufferSize );
+            }
+            ```
+        - ### **How to remove named shared memory x86**
+            If you want to remove the Named Shared Memory, just call **destroy_shared_memory_instance_x86** from **process**.
+            This will unmap, free, remove and clean everything up for you. 
+            -   Unmap view of mapped file
+            -   Free's allocated memory pages
+            -   Removes **shared_memory_instance** from instances vector inside **process**.
+            ```cpp
+            printf( "[#] Destroying now the shared memory instance.." );
+
+            if ( Globals::g_pProcess->destroy_shared_memory_instance_x86( "Local\\osmium_sh" ) )
+                printf( "success!\n" );
+            else
+                printf( "failed!\n" );
+            ```
 - ### **Basic overlay implementation**
     - ### **How to setup your overlay**
         You can either initialize your overlay by using the window title of the target process or a window handle.
