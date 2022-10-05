@@ -12,22 +12,21 @@
 #endif
 
 #include "../Hook/hook.hpp"
+#include "../SharedMemoryInstance/sharedmemoryinstance.hpp"
 
 class process
 {
 public:
-
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Default constructor.</summary>
 	///
 	/// <remarks>cragson, 03/30/22.</remarks>
 	///-------------------------------------------------------------------------------------------------
 
-	process() :
-		m_handle( INVALID_HANDLE_VALUE ),
-		m_hwnd( HWND() ),
-		m_pid( DWORD() )
-	{}
+	process()
+		: m_handle( INVALID_HANDLE_VALUE )
+	  , m_hwnd( HWND() )
+	  , m_pid( DWORD() ) {}
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>The default destructor, it will also close the process handle, destroy every active hook and free their allocated memory.</summary>
@@ -37,14 +36,35 @@ public:
 
 	~process()
 	{
-		// make sure no handle is leaked when leaving
-		if (this->m_handle)
-			CloseHandle(this->m_handle);
+		this->shutdown();
 
+		if( this->m_handle )
+			CloseHandle( this->m_handle );
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	This function should be called, when it's expected that the destructor won't be called on exiting. Will free any used resources, so no memory leaks should appear after that. </summary>
+	///
+	/// <remarks>	cragson, 05/10/2022. </remarks>
+	///
+	/// <returns>	True if it succeeds, false if it fails. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	bool shutdown()
+	{
 		// make sure no memory will be leaked, by unhooking existent hooks
 		if( !this->m_hooks.empty() )
-			for( const auto & hk : this->m_hooks )
-				this->destroy_hook_x86( hk->get_hook_address() );
+			for( const auto& hk : this->m_hooks )
+				if( !this->destroy_hook_x86( hk->get_hook_address() ) )
+					return false;
+
+		// make sure no memory will be leaked, by destroying all named shared memory instances
+		if( !this->m_sh_instances.empty() )
+			for( const auto& sh_inst : this->m_sh_instances )
+				if( !this->destroy_shared_memory_instance_x86( sh_inst->get_object_name() ) )
+					return false;
+
+		return true;
 	}
 
 	///-------------------------------------------------------------------------------------------------
@@ -109,7 +129,7 @@ public:
 	/// <returns>A buffer with datatype T, read from the memory address.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	template < typename T >
+	template< typename T >
 	T read( const std::uintptr_t address, size_t size_of_read = sizeof( T ) )
 	{
 		T buffer;
@@ -127,7 +147,7 @@ public:
 	/// <returns>The ASCII null terminated string.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] inline std::string read_ascii_null_terminated_string( const std::uintptr_t address )
+	[[nodiscard]] std::string read_ascii_null_terminated_string( const std::uintptr_t address )
 	{
 		std::string ret = {};
 
@@ -136,7 +156,7 @@ public:
 		char c = {};
 
 		while( ( c = this->read< char >( stringptr++ ) ) != '\0' )
-			if ( c >= 32 && c < 127 )
+			if( c >= 32 && c < 127 )
 				ret += c;
 			else
 				return "OSMIUM_NO_ASCII";
@@ -154,14 +174,14 @@ public:
 	/// <returns>True if it succeeds, false if it fails.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	template < typename T >
-	bool write(std::uintptr_t address, T value)
+	template< typename T >
+	bool write( std::uintptr_t address, T value )
 	{
 		return WriteProcessMemory(
 			this->m_handle,
-			reinterpret_cast<LPVOID>(address),
+			reinterpret_cast< LPVOID >( address ),
 			&value,
-			sizeof(value),
+			sizeof( value ),
 			nullptr
 		) != 0;
 	}
@@ -178,11 +198,12 @@ public:
 	/// <returns>The old protection from the memory block, needed for restoring the old protection.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] DWORD change_protection_of_memory_block( const std::uintptr_t address, const size_t size, const DWORD protection ) const
+	[[nodiscard]] DWORD change_protection_of_memory_block( const std::uintptr_t address, const size_t size,
+	                                                       const DWORD protection ) const
 	{
 		DWORD buffer = 0;
 
-		if ( !VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, protection, &buffer ) )
+		if( !VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, protection, &buffer ) )
 			return NULL;
 
 		return buffer;
@@ -199,7 +220,7 @@ public:
 	/// <returns>True if it succeeds, false if it fails.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	template < typename T >
+	template< typename T >
 	bool write_to_protected_memory( std::uintptr_t address, T value, size_t size = sizeof( T ) )
 	{
 		if( !this->is_process_ready() )
@@ -207,12 +228,24 @@ public:
 
 		DWORD buffer = 0;
 
-		if( !VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, PAGE_EXECUTE_READWRITE, &buffer ) )
+		if( !VirtualProtectEx(
+			this->m_handle,
+			reinterpret_cast< LPVOID >( address ),
+			size,
+			PAGE_EXECUTE_READWRITE,
+			&buffer
+		) )
 			return false;
 
-		if( WriteProcessMemory( this->m_handle, reinterpret_cast< LPVOID >( address ), &value, sizeof( value ), nullptr ) == 0 )
+		if( WriteProcessMemory(
+			this->m_handle,
+			reinterpret_cast< LPVOID >( address ),
+			&value,
+			sizeof( value ),
+			nullptr
+		) == 0 )
 			return false;
-		
+
 		return VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, buffer, &buffer ) != 0;
 	}
 
@@ -226,14 +259,15 @@ public:
 	/// <returns>The pointer to the freshly allocated page or if it fails it will return a null pointer.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] inline LPVOID allocate_rwx_page_in_process( const size_t page_size = 4096 ) const
+	[[nodiscard]] LPVOID allocate_rwx_page_in_process( const size_t page_size = 4096 ) const
 	{
-		const auto ret = VirtualAllocEx( 
-			this->m_handle, 
-			nullptr, 
-			page_size, 
-			MEM_COMMIT | MEM_RESERVE, 
-			PAGE_EXECUTE_READWRITE );
+		const auto ret = VirtualAllocEx(
+			this->m_handle,
+			nullptr,
+			page_size,
+			MEM_COMMIT | MEM_RESERVE,
+			PAGE_EXECUTE_READWRITE
+		);
 
 		return ret;
 	}
@@ -249,14 +283,15 @@ public:
 	/// <returns>The pointer to the freshly allocated page or if it fails it will return a null pointer.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] inline LPVOID allocate_page_in_process( const DWORD page_protection, const size_t page_size = 4096 ) const
+	[[nodiscard]] LPVOID allocate_page_in_process( const DWORD page_protection, const size_t page_size = 4096 ) const
 	{
 		const auto ret = VirtualAllocEx(
 			this->m_handle,
 			nullptr,
 			page_size,
 			MEM_COMMIT | MEM_RESERVE,
-			page_protection );
+			page_protection
+		);
 
 		return ret;
 	}
@@ -282,7 +317,7 @@ public:
 	/// <returns>True if it succeeds, false if it fails.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] bool setup_process(const std::wstring& process_identifier, const bool is_process_name = true );
+	[[nodiscard]] bool setup_process( const std::wstring& process_identifier, bool is_process_name = true );
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Sets up the process instance with an process id of the target process.</summary>
@@ -294,7 +329,7 @@ public:
 	/// <returns>True if it succeeds, false if it fails.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] bool setup_process( const DWORD process_id );
+	[[nodiscard]] bool setup_process( DWORD process_id );
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Gets the image base of an dumped image by looking in the internal unordered_map.</summary>
@@ -306,15 +341,15 @@ public:
 	/// <returns>The image base if the image was found or 0 if the image does not exist.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] std::uintptr_t get_image_base(const std::wstring& image_name) const noexcept
+	[[nodiscard]] std::uintptr_t get_image_base( const std::wstring& image_name ) const noexcept
 	{
 		try
 		{
-			return this->m_images.at(image_name).get()->get_image_base();
+			return this->m_images.at( image_name ).get()->get_image_base();
 		}
-		catch (std::exception& exception)
+		catch( std::exception& exception )
 		{
-			UNREFERENCED_PARAMETER(exception);
+			UNREFERENCED_PARAMETER( exception );
 			return std::uintptr_t();
 		}
 	}
@@ -329,15 +364,15 @@ public:
 	/// <returns>The image size if the image was found or 0 if the image does not exist.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] size_t get_image_size(const std::wstring& image_name) const noexcept
+	[[nodiscard]] size_t get_image_size( const std::wstring& image_name ) const noexcept
 	{
 		try
 		{
-			return this->m_images.at(image_name).get()->get_image_size();
+			return this->m_images.at( image_name ).get()->get_image_size();
 		}
-		catch (std::exception& exception)
+		catch( std::exception& exception )
 		{
-			UNREFERENCED_PARAMETER(exception);
+			UNREFERENCED_PARAMETER( exception );
 			return size_t();
 		}
 	}
@@ -352,17 +387,17 @@ public:
 	/// <returns>True if the image was dumped/ does exists and false if does not exists/ was not dumped.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] bool does_image_exist_in_map(const std::wstring& image_name) const noexcept
+	[[nodiscard]] bool does_image_exist_in_map( const std::wstring& image_name ) const noexcept
 	{
 		try
 		{
-			const auto temp = this->m_images.at(image_name).get();
+			const auto temp = this->m_images.at( image_name ).get();
 
 			return true;
 		}
-		catch (std::exception& exception)
+		catch( std::exception& exception )
 		{
-			UNREFERENCED_PARAMETER(exception);
+			UNREFERENCED_PARAMETER( exception );
 
 			return false;
 		}
@@ -396,10 +431,10 @@ public:
 	[[nodiscard]] image_x86* get_image_ptr_by_name( const std::wstring& image_name ) const noexcept
 #endif
 	{
-		if (!this->does_image_exist_in_map(image_name))
+		if( !this->does_image_exist_in_map( image_name ) )
 			return nullptr;
 
-		return this->m_images.at(image_name).get();
+		return this->m_images.at( image_name ).get();
 	}
 
 #ifdef _WIN64
@@ -455,14 +490,14 @@ public:
 
 	[[nodiscard]] double get_map_size_in_mbytes() const noexcept
 	{
-		if ( this->m_images.empty() )
+		if( this->m_images.empty() )
 			return double();
 
 		auto size = 0.0;
 
 		constexpr auto divider = 1024.0 * 1024.0;
 
-		for ( const auto& image : this->m_images | std::views::values )
+		for( const auto& image : this->m_images | std::views::values )
 			size += image->get_image_size() / divider;
 
 		return size;
@@ -476,7 +511,7 @@ public:
 
 	void clear_image_map() noexcept
 	{
-		if (!this->m_images.empty())
+		if( !this->m_images.empty() )
 			this->m_images.clear();
 	}
 
@@ -488,9 +523,9 @@ public:
 
 	void print_images() const
 	{
-		printf("[#] Image-Name | Image-Base | Image-Size | Is-Executable\n");
+		printf( "[#] Image-Name | Image-Base | Image-Size | Is-Executable\n" );
 
-		for (auto& [image_name, image_ptr] : this->m_images)
+		for( auto& [ image_name, image_ptr ] : this->m_images )
 			printf(
 #ifdef _WIN64
 				"[+] %-25ls | 0x%llX | 0x%llX | %d.\n",
@@ -502,7 +537,7 @@ public:
 				image_ptr->get_image_size(),
 				image_ptr->is_executable()
 			);
-		printf("\n\n");
+		printf( "\n\n" );
 	}
 
 	///-------------------------------------------------------------------------------------------------
@@ -513,18 +548,18 @@ public:
 	/// <param name="num_of_images">	Number of images which should be printed.</param>
 	///-------------------------------------------------------------------------------------------------
 
-	void print_images(const size_t num_of_images) const
+	void print_images( const size_t num_of_images ) const
 	{
-		if (this->m_images.empty() || num_of_images >= this->m_images.size())
+		if( this->m_images.empty() || num_of_images >= this->m_images.size() )
 			return;
 
-		printf("[#] Image-Name | Image-Base | Image-Size | Is-Executable\n");
+		printf( "[#] Image-Name | Image-Base | Image-Size | Is-Executable\n" );
 
 		size_t counter = 0;
 
-		for (auto& [image_name, image_ptr] : this->m_images)
+		for( auto& [ image_name, image_ptr ] : this->m_images )
 		{
-			if (counter == num_of_images)
+			if( counter == num_of_images )
 				return;
 
 			printf(
@@ -555,7 +590,7 @@ public:
 	/// <returns>True if it succeeds, false if it fails.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	bool patch_bytes(const byte_vector& bytes, std::uintptr_t address, size_t size);
+	bool patch_bytes( const byte_vector& bytes, std::uintptr_t address, size_t size );
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Patch bytes in the target process with a given array of bytes.</summary>
@@ -569,7 +604,7 @@ public:
 	/// <returns>True if it succeeds, false if it fails.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	bool patch_bytes(const std::byte bytes[], std::uintptr_t address, size_t size);
+	bool patch_bytes( const std::byte bytes[ ], std::uintptr_t address, size_t size );
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Overwrites bytes with NOP's inside the target process.</summary>
@@ -582,7 +617,7 @@ public:
 	/// <returns>True if it succeeds, false if it fails.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	bool nop_bytes(std::uintptr_t address, size_t size);
+	bool nop_bytes( std::uintptr_t address, size_t size );
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Reads an image from the target process to an vector of bytes.</summary>
@@ -595,7 +630,7 @@ public:
 	/// <returns>True if it succeeds, false if it fails.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] bool read_image(byte_vector* dest_vec, const std::wstring& image_name) const;
+	[[nodiscard]] bool read_image( byte_vector* dest_vec, const std::wstring& image_name ) const;
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Creates an mid function x86 hook inside of the target process by allocating a rwx page, copying the given shellcode to it and patching the given address with an JMP to the allocated page. Also adds a new hook instance into the local hook vector.</summary>
@@ -609,7 +644,8 @@ public:
 	/// <returns>True if it succeeds, false if it fails.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] bool create_hook_x86( const std::uintptr_t start_address, const size_t size, const std::vector< uint8_t >& shellcode );
+	[[nodiscard]] bool create_hook_x86( std::uintptr_t start_address, size_t size,
+	                                    const std::vector< uint8_t >& shellcode );
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Destroys the x86 hook inside the target process by restoring the old bytes and freeing the allocated memory page inside the target process.</summary>
@@ -621,7 +657,7 @@ public:
 	/// <returns>True if it succeeds, false if it fails.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] bool destroy_hook_x86( const std::uintptr_t start_address );
+	[[nodiscard]] bool destroy_hook_x86( std::uintptr_t start_address );
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Gets size of current hooks inside the target process.</summary>
@@ -631,7 +667,7 @@ public:
 	/// <returns>The number of current hooks inside of the target process.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] inline size_t get_size_of_hooks() const noexcept
+	[[nodiscard]] size_t get_size_of_hooks() const noexcept
 	{
 		return this->m_hooks.size();
 	}
@@ -646,10 +682,10 @@ public:
 	/// <returns>Null if it fails, else the hook pointer by address.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] inline hook* get_hook_ptr_by_address(const std::uintptr_t start_address_of_hook) const
+	[[nodiscard]] hook* get_hook_ptr_by_address( const std::uintptr_t start_address_of_hook ) const
 	{
-		for (const auto& hook : this->m_hooks)
-			if (hook->get_hook_address() == start_address_of_hook)
+		for( const auto& hook : this->m_hooks )
+			if( hook->get_hook_address() == start_address_of_hook )
 				return hook.get();
 
 		return nullptr;
@@ -663,11 +699,83 @@ public:
 	/// <returns>The pointer to the vector where all hooks are stored.</returns>
 	///-------------------------------------------------------------------------------------------------
 
-	[[nodiscard]] inline auto get_hooks_ptr() noexcept
+	[[nodiscard]] auto get_hooks_ptr() noexcept
 	{
 		return &this->m_hooks;
 	}
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Executes the given shellcode via remote thread (allocated memory page has RWX rights) inside the target process and waits until the thread terminates. </summary>
+	///
+	/// <remarks>	cragson, 05/10/2022. </remarks>
+	///
+	/// <param name="shellcode">	The shellcode which will be executed. </param>
+	///
+	/// <returns>	True if it succeeds, false if it fails. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool execute_shellcode_in_process( const std::vector< uint8_t >& shellcode ) const;
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Creates and installs a named shared memory instance with a given object name, file size HIGH and LOW. With the pointer from the shared memory instance you will be able to do IPC via Named Shared Memory. All new instances will be hold inside the instances vector. </summary>
+	///
+	/// <remarks>	cragson, 05/10/2022. </remarks>
+	///
+	/// <param name="object_name">   	Name of the object. </param>
+	/// <param name="file_size_high">	The file size high. </param>
+	/// <param name="file_size_low"> 	The file size low. </param>
+	///
+	/// <returns>	True if it succeeds, false if it fails. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool create_shared_memory_instance_x86( const std::string& object_name, DWORD file_size_high,
+	                                                      DWORD file_size_low );
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>
+	/// 	Destroys the shared memory instance described by object_name and removes the instance from the instances vector.
+	/// </summary>
+	///
+	/// <remarks>	cragson, 05/10/2022. </remarks>
+	///
+	/// <param name="object_name">	Name of the object. </param>
+	///
+	/// <returns>	True if it succeeds, false if it fails. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool destroy_shared_memory_instance_x86( const std::string& object_name );
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Gets shared memory instance pointer by object name. </summary>
+	///
+	/// <remarks>	cragson, 05/10/2022. </remarks>
+	///
+	/// <param name="object_name">	Name of the object. </param>
+	///
+	/// <returns>	Null if it fails, else the shared memory instance pointer. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] shared_memory_instance* get_shared_memory_instance_by_object_name(
+		const std::string& object_name ) const
+	{
+		for( const auto& inst : this->m_sh_instances )
+			if( inst->get_object_name() == object_name )
+				return inst.get();
+		return nullptr;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Gets the pointer to the vector whre all shared memory instances are stored. </summary>
+	///
+	/// <remarks>	cragson, 05/10/2022. </remarks>
+	///
+	/// <returns>	The pointer of the vector where all shared memory instances are stored. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] auto get_shared_memory_instances_ptr() noexcept
+	{
+		return &this->m_sh_instances;
+	}
 
 private:
 	HANDLE m_handle;
@@ -683,4 +791,6 @@ private:
 #endif
 
 	std::vector< std::unique_ptr< hook > > m_hooks;
+
+	std::vector< std::unique_ptr< shared_memory_instance > > m_sh_instances;
 };

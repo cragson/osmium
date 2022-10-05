@@ -7,15 +7,15 @@ struct window_cb_args
 	HWND target_hwnd;
 };
 
-BOOL CALLBACK hwnd_cb(HWND hWnd, LPARAM lparam)
+BOOL CALLBACK hwnd_cb( HWND hWnd, LPARAM lparam )
 {
 	DWORD pid = DWORD();
 
-	GetWindowThreadProcessId(hWnd, &pid);
+	GetWindowThreadProcessId( hWnd, &pid );
 
-	const auto args = reinterpret_cast<window_cb_args*>(lparam);
+	const auto args = reinterpret_cast< window_cb_args* >( lparam );
 
-	if (pid == args->target_pid)
+	if( pid == args->target_pid )
 	{
 		args->target_hwnd = hWnd;
 
@@ -27,53 +27,53 @@ BOOL CALLBACK hwnd_cb(HWND hWnd, LPARAM lparam)
 
 bool process::refresh_image_map()
 {
-	MODULEENTRY32 me32 = { sizeof(MODULEENTRY32) };
+	MODULEENTRY32 me32 = { sizeof( MODULEENTRY32 ) };
 
-	const auto snapshot_handle = CreateToolhelp32Snapshot(TH32CS_SNAPALL, this->m_pid);
-	if (!snapshot_handle)
+	const auto snapshot_handle = CreateToolhelp32Snapshot( TH32CS_SNAPALL, this->m_pid );
+	if( !snapshot_handle )
 		return false;
 
 	// after successfully retrieving my snapshot handle, I clear the map - to get rid of the old images + information
 	this->m_images.clear();
 
-	if (Module32First(snapshot_handle, &me32))
+	if( Module32First( snapshot_handle, &me32 ) )
 	{
 		do
 		{
 			// check first if the image name already exists, as a key, in the map
 			// if so, just skip the certain image
-			if (this->m_images.find(me32.szModule) != this->m_images.end())
+			if( this->m_images.contains( me32.szModule ) )
 				continue;
 
-			const auto image_base = reinterpret_cast<std::uintptr_t>(me32.modBaseAddr);
-			const auto image_size = static_cast<size_t>(me32.modBaseSize);
+			const auto image_base = reinterpret_cast< std::uintptr_t >( me32.modBaseAddr );
+			const auto image_size = static_cast< size_t >( me32.modBaseSize );
 
 			// create a new object for the image name, which is the key for the map
 #ifdef _WIN64
 			this->m_images[me32.szModule] = std::make_unique< image_x64 >( image_base, image_size );
 #else
-			this->m_images[me32.szModule] = std::make_unique< image_x86 >( image_base, image_size );
+			this->m_images[ me32.szModule ] = std::make_unique< image_x86 >( image_base, image_size );
 #endif
 			// now dump the image from memory and write it into the specific byte_vector
 			// if the image could not be read, like RPM sets 299 as the error code
 			// the image will be removed from the map
 			// smart ptr should take care of collecting the garbage
-			if (!this->read_image(this->m_images[me32.szModule]->get_byte_vector_ptr(), me32.szModule))
-				this->m_images.erase(me32.szModule);
-
-		} while (Module32Next(snapshot_handle, &me32));
+			if( !this->read_image( this->m_images[ me32.szModule ]->get_byte_vector_ptr(), me32.szModule ) )
+				this->m_images.erase( me32.szModule );
+		}
+		while( Module32Next( snapshot_handle, &me32 ) );
 	}
 
 	// make sure to close the handle 
-	CloseHandle(snapshot_handle);
+	CloseHandle( snapshot_handle );
 
 	return true;
 }
 
 
-bool process::setup_process(const std::wstring& process_identifier, const bool is_process_name)
+bool process::setup_process( const std::wstring& process_identifier, const bool is_process_name )
 {
-	if (process_identifier.empty())
+	if( process_identifier.empty() )
 		return false;
 
 	auto window_handle = HWND();
@@ -85,16 +85,15 @@ bool process::setup_process(const std::wstring& process_identifier, const bool i
 	if( !is_process_name )
 	{
 		window_handle = FindWindowW( nullptr, process_identifier.c_str() );
-		if ( !window_handle )
+		if( !window_handle )
 			return false;
 
-		if ( !GetWindowThreadProcessId( window_handle, &buffer ) )
+		if( !GetWindowThreadProcessId( window_handle, &buffer ) )
 			return false;
 
 		proc_handle = OpenProcess( PROCESS_ALL_ACCESS, FALSE, buffer );
-		if ( !proc_handle )
+		if( !proc_handle )
 			return false;
-
 	}
 	// if the process identifier is a process name
 	// use it for retrieving the process id first
@@ -120,14 +119,15 @@ bool process::setup_process(const std::wstring& process_identifier, const bool i
 
 					break;
 				}
-			} while( Process32Next( snapshot_handle, &pe32 ) );
+			}
+			while( Process32Next( snapshot_handle, &pe32 ) );
 		}
 		else
 			return false;
 
 		// now I got the pid and I need to open a handle to the process
 		proc_handle = OpenProcess( PROCESS_ALL_ACCESS, FALSE, buffer );
-		if ( !proc_handle )
+		if( !proc_handle )
 			return false;
 
 		// The last needed thing is the window handle
@@ -135,7 +135,7 @@ bool process::setup_process(const std::wstring& process_identifier, const bool i
 
 		EnumWindows( hwnd_cb, reinterpret_cast< LPARAM >( &args ) );
 
-		if ( !args.target_hwnd )
+		if( !args.target_hwnd )
 			return false;
 
 		// Now I can go out of the else block and just let the values be set
@@ -150,7 +150,7 @@ bool process::setup_process(const std::wstring& process_identifier, const bool i
 
 	// Before I set the retrieved data, I want to safe information about every image in the process
 	// So I iterate over every image loaded into the certain process and store them :)
-	if ( !this->refresh_image_map() )
+	if( !this->refresh_image_map() )
 	{
 		// because I need the correct handle in this function, I need to take care of the case where the handle is correct but images cannot be dumped
 		// so clear the retrieved data about the process here, if the function fails
@@ -163,7 +163,6 @@ bool process::setup_process(const std::wstring& process_identifier, const bool i
 
 	return true;
 }
-
 
 
 bool process::setup_process( const DWORD process_id )
@@ -191,7 +190,7 @@ bool process::setup_process( const DWORD process_id )
 
 	// Before I set the retrieved data, I want to safe information about every image in the process
 	// So I iterate over every image loaded into the certain process and store them :)
-	if ( !this->refresh_image_map() )
+	if( !this->refresh_image_map() )
 	{
 		// because I need the correct handle in this function, I need to take care of the case where the handle is correct but images cannot be dumped
 		// so clear the retrieved data about the process here, if the function fails
@@ -205,81 +204,81 @@ bool process::setup_process( const DWORD process_id )
 	return true;
 }
 
-bool process::patch_bytes(const byte_vector& bytes, const std::uintptr_t address, const size_t size)
+bool process::patch_bytes( const byte_vector& bytes, const std::uintptr_t address, const size_t size )
 {
-	if (bytes.empty() || !address || !size || bytes.size() > size)
+	if( bytes.empty() || !address || !size || bytes.size() > size )
 		return false;
 
 	DWORD buffer = 0;
 
-	if (!VirtualProtectEx(
+	if( !VirtualProtectEx(
 		this->m_handle,
-		reinterpret_cast<LPVOID>(address),
+		reinterpret_cast< LPVOID >( address ),
 		size,
 		PAGE_EXECUTE_READWRITE,
 		&buffer
-	))
+	) )
 		return false;
 
-	for (size_t i = 0; i < size; i++)
-		this->write< byte >(address + i, 0x90);
+	for( size_t i = 0; i < size; i++ )
+		this->write< byte >( address + i, 0x90 );
 
-	for (size_t i = 0; i < bytes.size(); i++)
-		this->write< std::byte >(address + i, bytes.at(i));
+	for( size_t i = 0; i < bytes.size(); i++ )
+		this->write< std::byte >( address + i, bytes.at( i ) );
 
-	if (!VirtualProtectEx(this->m_handle, reinterpret_cast<LPVOID>(address), size, buffer, &buffer))
+	if( !VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, buffer, &buffer ) )
 		return false;
 
 	return true;
 }
 
 
-bool process::patch_bytes(const std::byte bytes[], const std::uintptr_t address, const size_t size)
+bool process::patch_bytes( const std::byte bytes[ ], const std::uintptr_t address, const size_t size )
 {
-	if (!address || !size)
+	if( !address || !size )
 		return false;
 
 	DWORD buffer = 0;
 
-	if (!VirtualProtectEx(
+	if( !VirtualProtectEx(
 		this->m_handle,
-		reinterpret_cast<LPVOID>(address),
+		reinterpret_cast< LPVOID >( address ),
 		size,
 		PAGE_EXECUTE_READWRITE,
 		&buffer
-	))
+	) )
 		return false;
 
-	for (size_t i = 0; i < size; i++)
-		this->write< std::byte >(address + i, bytes[i]);
+	for( size_t i = 0; i < size; i++ )
+		this->write< std::byte >( address + i, bytes[ i ] );
 
-	if (!VirtualProtectEx(this->m_handle, reinterpret_cast<LPVOID>(address), size, buffer, &buffer))
+	if( !VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, buffer, &buffer ) )
 		return false;
 
 	return true;
 }
 
 
-bool process::nop_bytes(const std::uintptr_t address, const size_t size)
+bool process::nop_bytes( const std::uintptr_t address, const size_t size )
 {
-	if (!address || !size)
+	if( !address || !size )
 		return false;
 
 	DWORD buffer = 0;
 
-	if (!VirtualProtectEx(
+	if( !VirtualProtectEx(
 		this->m_handle,
-		reinterpret_cast<LPVOID>(address),
+		reinterpret_cast< LPVOID >( address ),
 		size,
 		PAGE_EXECUTE_READWRITE,
 		&buffer
-	))
+	) )
 		return false;
 
-	for (size_t i = 0; i < size; i++)
-		this->write< byte >(address + i, 0x90);
+	for( size_t i = 0; i < size; i++ )
+		this->write< byte >( address + i, 0x90 );
 
-	if (!VirtualProtectEx(this->m_handle, reinterpret_cast<LPVOID>(address), size, buffer, &buffer))
+	if( !VirtualProtectEx( this->m_handle, reinterpret_cast< LPVOID >( address ), size, buffer, &buffer ) )
 		return false;
 
 	return true;
@@ -287,7 +286,7 @@ bool process::nop_bytes(const std::uintptr_t address, const size_t size)
 
 bool process::read_image( byte_vector* dest_vec, const std::wstring& image_name ) const
 {
-	if ( !dest_vec || image_name.empty() || !this->does_image_exist_in_map( image_name ) )
+	if( !dest_vec || image_name.empty() || !this->does_image_exist_in_map( image_name ) )
 		return false;
 
 	// here should no exception occur, because I checked above if the image exists in the map
@@ -297,10 +296,17 @@ bool process::read_image( byte_vector* dest_vec, const std::wstring& image_name 
 	dest_vec->clear();
 	dest_vec->resize( image->get_image_size() );
 
-	return ReadProcessMemory( this->m_handle, reinterpret_cast< LPCVOID >( image->get_image_base() ), dest_vec->data(), image->get_image_size(), nullptr ) != 0;
+	return ReadProcessMemory(
+		this->m_handle,
+		reinterpret_cast< LPCVOID >( image->get_image_base() ),
+		dest_vec->data(),
+		image->get_image_size(),
+		nullptr
+	) != 0;
 }
 
-bool process::create_hook_x86( const std::uintptr_t start_address, const size_t size, const std::vector< uint8_t >& shellcode)
+bool process::create_hook_x86( const std::uintptr_t start_address, const size_t size,
+                               const std::vector< uint8_t >& shellcode )
 {
 	if( start_address < 0 || size < 0 || shellcode.empty() )
 		return false;
@@ -312,17 +318,18 @@ bool process::create_hook_x86( const std::uintptr_t start_address, const size_t 
 		return false;
 
 	// copy now the shellcode into the allocated memory page in the target process
-	if( !WriteProcessMemory( 
-		this->m_handle, 
-		rwx_page, 
-		&shellcode.front(), 
-		shellcode.size(), 
-		nullptr 
+	if( !WriteProcessMemory(
+		this->m_handle,
+		rwx_page,
+		&shellcode.front(),
+		shellcode.size(),
+		nullptr
 	) )
 		return false;
 
 	// calculate now the jump address back after the hook
-	const DWORD jmp_back_addr = ( start_address + size ) - ( reinterpret_cast< std::uintptr_t >( rwx_page ) + shellcode.size() + 5 );
+	const DWORD jmp_back_addr = ( start_address + size ) - ( reinterpret_cast< std::uintptr_t >( rwx_page ) + shellcode.
+		size() + 5 );
 
 	// Place now the jmp instruction + address into the allocated page, which will jmp back to the hooked function (after the jmp to the hook)
 	if( !this->write< uint8_t >( reinterpret_cast< std::uintptr_t >( rwx_page ) + shellcode.size(), 0xE9 ) )
@@ -340,23 +347,23 @@ bool process::create_hook_x86( const std::uintptr_t start_address, const size_t 
 	original_bytes.resize( size );
 
 	// read now the original bytes
-	if( !ReadProcessMemory( 
-		this->m_handle, 
-		reinterpret_cast< LPCVOID >( start_address ), 
-		original_bytes.data(), 
-		size, 
-		nullptr 
+	if( !ReadProcessMemory(
+		this->m_handle,
+		reinterpret_cast< LPCVOID >( start_address ),
+		original_bytes.data(),
+		size,
+		nullptr
 	) )
 		return false;
 
 	// change now the page protection of the hooked function
 	DWORD buffer = 0;
 
-	if ( !VirtualProtectEx(
-		this->m_handle, 
-		reinterpret_cast< LPVOID >( start_address ), 
-		size, 
-		PAGE_EXECUTE_READWRITE, 
+	if( !VirtualProtectEx(
+		this->m_handle,
+		reinterpret_cast< LPVOID >( start_address ),
+		size,
+		PAGE_EXECUTE_READWRITE,
 		&buffer
 	) )
 		return false;
@@ -382,11 +389,11 @@ bool process::create_hook_x86( const std::uintptr_t start_address, const size_t 
 
 	// set now the old page protection, where the hooked function lies
 	if( !VirtualProtectEx(
-		this->m_handle, 
-		reinterpret_cast< LPVOID >( start_address ), 
-		size, 
-		buffer, 
-		&buffer 
+		this->m_handle,
+		reinterpret_cast< LPVOID >( start_address ),
+		size,
+		buffer,
+		&buffer
 	) )
 		return false;
 
@@ -397,7 +404,13 @@ bool process::create_hook_x86( const std::uintptr_t start_address, const size_t 
 	// target function was hooked with jmp which points to the rwx page
 
 	// So after that procedure I am able to create a hook instance with the needed information
-	auto _hook = std::make_unique< hook >( start_address, reinterpret_cast<  std::uintptr_t >( rwx_page ), size, shellcode, original_bytes );
+	auto _hook = std::make_unique< hook >(
+		start_address,
+		reinterpret_cast< std::uintptr_t >( rwx_page ),
+		size,
+		shellcode,
+		original_bytes
+	);
 
 	// add now the hook to the process vector
 	this->m_hooks.push_back( std::move( _hook ) );
@@ -411,7 +424,7 @@ bool process::destroy_hook_x86( const std::uintptr_t start_address )
 		return false;
 
 	// iterate over all placed hooks and check if the address of the hooked function exists
-	for( const auto& hk :this->m_hooks )
+	for( const auto& hk : this->m_hooks )
 		if( hk->get_hook_address() == start_address )
 		{
 			// before I go on, I want to make sure that the hook size is equal to the size of the vector which contains the original bytes
@@ -422,7 +435,7 @@ bool process::destroy_hook_x86( const std::uintptr_t start_address )
 			DWORD buffer = 0;
 
 			// change the page protection to restore the original bytes
-			if ( !VirtualProtectEx(
+			if( !VirtualProtectEx(
 				this->m_handle,
 				reinterpret_cast< LPVOID >( start_address ),
 				hk->get_hook_size(),
@@ -432,32 +445,32 @@ bool process::destroy_hook_x86( const std::uintptr_t start_address )
 				return false;
 
 			// write now the original bytes
-			if( !WriteProcessMemory( 
-			this->m_handle,
+			if( !WriteProcessMemory(
+				this->m_handle,
 				reinterpret_cast< LPVOID >( start_address ),
 				hk->get_original_bytes_ptr()->data(),
 				hk->get_original_bytes_ptr()->size(),
-				nullptr 
-			))
+				nullptr
+			) )
 				return false;
 
 			// restore the old page protection now
-			if ( !VirtualProtectEx(
+			if( !VirtualProtectEx(
 				this->m_handle,
 				reinterpret_cast< LPVOID >( start_address ),
 				hk->get_hook_size(),
 				buffer,
 				&buffer
-			))
+			) )
 				return false;
 
 			// now I need to free the allocated memory
-			if( !VirtualFreeEx( 
-			this->m_handle,
+			if( !VirtualFreeEx(
+				this->m_handle,
 				reinterpret_cast< LPVOID >( hk->get_allocated_page_address() ),
 				NULL,
 				MEM_RELEASE
-			))
+			) )
 				return false;
 
 			// need to remove the hook element now from the vector
@@ -468,5 +481,307 @@ bool process::destroy_hook_x86( const std::uintptr_t start_address )
 			return true;
 		}
 
+	return false;
+}
+
+bool process::execute_shellcode_in_process( const std::vector< uint8_t >& shellcode ) const
+{
+	// no shellcode? no execution for you
+	if( shellcode.empty() )
+		return false;
+
+	// allocate memory in process for the shellcode
+	const auto page = this->allocate_rwx_page_in_process( shellcode.size() );
+
+	if( !page )
+		return false;
+
+	// copy now the shellcode to the freshly allocated memory page
+	if( !WriteProcessMemory(
+		this->m_handle,
+		page,
+		shellcode.data(),
+		shellcode.size(),
+		nullptr
+	) )
+		return false;
+
+	// create now a thread inside the process, which executes the shellcode
+	const auto ret = CreateRemoteThread(
+		this->m_handle,
+		nullptr,
+		NULL,
+		reinterpret_cast< LPTHREAD_START_ROUTINE >( page ),
+		nullptr,
+		NULL,
+		nullptr
+	);
+
+	if( !ret )
+		return false;
+
+	// Wait until thread finish it's execution
+	WaitForSingleObject( ret, INFINITE );
+
+	// close now the thread handle
+	if( !CloseHandle( ret ) )
+		return false;
+
+	// free now the allocated memory page for the shellcode
+	if( !VirtualFreeEx(
+		this->m_handle,
+		page,
+		NULL,
+		MEM_RELEASE
+	) )
+		return false;
+
+	// Now everything should be fine again
+
+	return true;
+}
+
+bool process::create_shared_memory_instance_x86( const std::string& object_name, const DWORD file_size_high,
+                                                 const DWORD file_size_low )
+{
+	// i don't want empty object names here, hausrecht und so
+	if( object_name.empty() )
+		return false;
+
+	// check if object name is already in instance vector
+	for( const auto& inst : this->m_sh_instances )
+		if( inst->get_object_name() == object_name )
+			return false;
+
+	const auto kernel32 = GetModuleHandleA( "Kernel32" );
+
+	if( !kernel32 )
+		return false;
+
+	const auto fnCreateFileMappingA = GetProcAddress( kernel32, "CreateFileMappingA" );
+
+	if( !fnCreateFileMappingA )
+		return false;
+
+	const auto fnMapViewOfFile = GetProcAddress( kernel32, "MapViewOfFile" );
+
+	if( !fnMapViewOfFile )
+		return false;
+
+	// allocate now a memory page for the saved data and the string of the global object inside the process
+	const auto save_data_ptr = this->allocate_page_in_process( PAGE_READWRITE, 8 + object_name.size() );
+
+	if( !save_data_ptr )
+		return false;
+
+	const auto name_ptr = reinterpret_cast< std::uintptr_t >( save_data_ptr ) + 8;
+
+	// write now the object name string into the process
+	if( !WriteProcessMemory(
+		this->m_handle,
+		reinterpret_cast< LPVOID >( name_ptr ),
+		object_name.data(),
+		object_name.size(),
+		nullptr
+	) )
+		return false;
+
+	std::vector< uint8_t > install_sh =
+	{
+		0xBA, 0xEF, 0xBE, 0xAD, 0xDE,			// mov edx, DEADBEEF	; EDX = CreateFileMappingA Address
+		0xBF, 0xEF, 0xBE, 0xAD, 0xDE,			// mov edi, DEADBEEF	; EDI = MapViewOfFile Address
+		0xBB, 0xEF, 0xBE, 0xAD, 0xDE,			// mov ebx, DEADBEEF	; Address of global object name string
+		0x53,									// push ebx
+		0xBB, 0xEF, 0xBE, 0xAD, 0xDE,			// mov ebx, DEADBEEF	; max size LOW
+		0x53,									// push ebx
+		0xBB, 0xEF, 0xBE, 0xAD, 0xDE,			// mov ebx, DEADBEEF	; max size HIGH
+		0x53,									// push ebx
+		0x6A, 0x04,								// push 04				; PAGE_READWRITE
+		0x6A, 0x00,								// push 00
+		0x68, 0xFF, 0xFF, 0xFF, 0xFF,			// push FFFFFFFF
+		0xFF, 0xD2,								// call edx				; CreateFileMappingA()
+		0x83, 0xF8, 0x00,						// cmp eax,0
+		0x74, 0x23,								// je 
+		0x8B, 0xC8,								// mov ecx, eax			; ECX = handle to mapping object
+		0xBB, 0xEF, 0xBE, 0xAD, 0xDE,			// mov ebx, DEADBEEF	; max size low
+		0x53,									// push ebx
+		0x6A, 0x00,								// push 00
+		0x6A, 0x00,								// push 00
+		0x68, 0x1F, 0x00, 0x0F, 0x00,			// push 000F001F		; FILE_MAP_ALL_ACCESS
+		0x50,									// push eax
+		0xFF, 0xD7,								// call edi				; MapViewOfFile()
+		0x83, 0xF8, 0x00,						// cmp eax,0
+		0x74, 0x0A,								// je 
+		0xBB, 0xEF, 0xBE, 0xAD, 0xDE,			// mov ebx, DEADBEEF	; address where return values are backup'ed
+		0x89, 0x0B,								// mov [ebx], ecx		; handle to mapping object
+		0x89, 0x43, 0x04,						// mov [ebx+04], eax	; starting address of mapped view
+		0xC3									// ret 
+	};
+
+	// set address of CreateFileMappingA
+	*reinterpret_cast< std::uintptr_t* >( &install_sh[ 1 ] ) = reinterpret_cast< std::uintptr_t >(
+		fnCreateFileMappingA );
+
+	// set address of MapViewOfFile
+	*reinterpret_cast< std::uintptr_t* >( &install_sh[ 6 ] ) = reinterpret_cast< std::uintptr_t >( fnMapViewOfFile );
+
+	// set address of the global object name string
+	*reinterpret_cast< std::uintptr_t* >( &install_sh[ 11 ] ) = name_ptr;
+
+	// set maximum size low word of view offset
+	*reinterpret_cast< DWORD* >( &install_sh[ 17 ] ) = file_size_low;
+
+	// set maximum size high word of view offset
+	*reinterpret_cast< DWORD* >( &install_sh[ 23 ] ) = file_size_high;
+
+	// set maximum size low word of view offset
+	*reinterpret_cast< DWORD* >( &install_sh[ 47 ] ) = file_size_low;
+
+	// set now the allocated page ptr for the saved data
+	*reinterpret_cast< std::uintptr_t* >( &install_sh[ 70 ] ) = reinterpret_cast< std::uintptr_t >( save_data_ptr );
+
+
+	// execute now the installation shellcode
+	if( !this->execute_shellcode_in_process( install_sh ) )
+		return false;
+
+	// read now the saved data from the allocated memory page
+	const auto object_handle = this->read< HANDLE >( reinterpret_cast< std::uintptr_t >( save_data_ptr ) );
+
+	if( !object_handle )
+		return false;
+
+	// read now the starting address of the mapped view fro the allocated memory page
+	const auto view_address = this->read< std::uintptr_t >( reinterpret_cast< std::uintptr_t >( save_data_ptr ) + 4 );
+
+	if( !view_address )
+		return false;
+
+	// now create the second part of the shared memory in this process
+
+	// open the file mapping to the global object
+	const auto file_handle = OpenFileMappingA( FILE_MAP_ALL_ACCESS, FALSE, object_name.c_str() );
+
+	if( !file_handle )
+		return false;
+
+	// now map the view of the mapped file into our address space
+	const auto view_ptr = MapViewOfFile(
+		file_handle,
+		FILE_MAP_ALL_ACCESS,
+		0,
+		0,
+		file_size_high == 0 ? file_size_low : file_size_high & file_size_low
+	);
+
+	if( !view_ptr )
+		return false;
+
+	// create now the shared memory instance
+	auto sh_mem = std::make_unique< shared_memory_instance >(
+		object_name,
+		file_handle,
+		view_ptr,
+		reinterpret_cast< void* >( view_address ),
+		object_handle,
+		!file_size_high ? file_size_low : file_size_high & file_size_low
+	);
+
+	// add it to the internal vector for shared memory instances
+	this->m_sh_instances.push_back( std::move( sh_mem ) );
+
+	// now free the allocated memory page for the saved data
+	if( !VirtualFreeEx(
+		this->m_handle,
+		save_data_ptr,
+		0,
+		MEM_RELEASE
+	) )
+		return false;
+
+	return true;
+}
+
+bool process::destroy_shared_memory_instance_x86( const std::string& object_name )
+{
+	if( object_name.empty() )
+		return false;
+
+	// check if object name exists in instance vector
+	for( const auto& sh_inst : this->m_sh_instances )
+	{
+		if( sh_inst->get_object_name() == object_name )
+		{
+			// Get now the addresses of the needed winapi functions
+
+			const auto kernel32 = GetModuleHandleA( "Kernel32" );
+
+			if( !kernel32 )
+				return false;
+
+			const auto fnUnmapViewOfFile = GetProcAddress( kernel32, "UnmapViewOfFile" );
+
+			if( !fnUnmapViewOfFile )
+				return false;
+
+			const auto fnCloseHandle = GetProcAddress( kernel32, "CloseHandle" );
+
+			if( !fnCloseHandle )
+				return false;
+
+			// prepare now the shellcode
+
+			std::vector< uint8_t > uninstall_sh =
+			{
+				0xBE, 0xEF, 0xBE, 0xAD, 0xDE,			// mov esi,DEADBEEF			; Address of UnmapViewOfFile
+				0xBF, 0xEF, 0xBE, 0xAD, 0xDE,			// mov edi,DEADBEEF			; Address of CloseHandle
+				0xB8, 0xEF, 0xDB, 0xEA, 0x0D,			// mov eax,0DEADBEF			; pBuf ptr
+				0x50,									// push eax
+				0xFF, 0xD6,								// call esi					; UnmapViewOfFile()
+				0xB8, 0xEF, 0xBE, 0xAD, 0xDE,			// mov eax,DEADBEEF			; hMapFile handle
+				0x50,									// push eax
+				0xFF, 0xD7,								// call edi					; CloseHandle()
+				0xC3									// ret 
+
+			};
+
+			// set address of UnmapViewOfFile
+			*reinterpret_cast< std::uintptr_t* >( &uninstall_sh[ 1 ] ) = reinterpret_cast< std::uintptr_t >(
+				fnUnmapViewOfFile );
+
+			// set address of CloseHandle
+			*reinterpret_cast< std::uintptr_t* >( &uninstall_sh[ 6 ] ) = reinterpret_cast< std::uintptr_t >(
+				fnCloseHandle );
+
+			// set now the pBuf pointer
+			*reinterpret_cast< std::uintptr_t* >( &uninstall_sh[ 11 ] ) = reinterpret_cast< std::uintptr_t >( sh_inst->
+				get_process_buffer_ptr() );
+
+			// set now the hMapFile handle
+			*reinterpret_cast< HANDLE* >( &uninstall_sh[ 19 ] ) = sh_inst->get_file_mapping_object_handle();
+
+			// execute now the shellcode inside the process
+
+			if( !this->execute_shellcode_in_process( uninstall_sh ) )
+				return false;
+
+			// now I need to unmap the view also from this process
+			if( !UnmapViewOfFile( sh_inst->get_buffer_ptr< LPCVOID >() ) )
+				return false;
+
+			// also I need to close handle of the mapping file
+			if( !CloseHandle( sh_inst->get_file_mapping_object_handle() ) )
+				return false;
+
+			// also I need to remove the shared memory instance ptr form the vector
+			this->m_sh_instances.erase(
+				std::ranges::find( this->m_sh_instances.begin(), this->m_sh_instances.end(), sh_inst )
+			);
+
+			// now everything should be fine 
+
+			return true;
+		}
+	}
 	return false;
 }
