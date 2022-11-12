@@ -29,8 +29,8 @@ bool process::refresh_image_map()
 {
 	MODULEENTRY32 me32 = { sizeof( MODULEENTRY32 ) };
 
-	const auto snapshot_handle = CreateToolhelp32Snapshot( TH32CS_SNAPALL, this->m_pid );
-	if( !snapshot_handle )
+	const auto snapshot_handle = CreateToolhelp32Snapshot( TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, this->m_pid );
+	if( !snapshot_handle || snapshot_handle == INVALID_HANDLE_VALUE )
 		return false;
 
 	// after successfully retrieving my snapshot handle, I clear the map - to get rid of the old images + information
@@ -129,6 +129,9 @@ bool process::setup_process( const std::wstring& process_identifier, const bool 
 		proc_handle = OpenProcess( PROCESS_ALL_ACCESS, FALSE, buffer );
 		if( !proc_handle )
 			return false;
+
+		// prevent leaking the handle
+		CloseHandle( snapshot_handle );
 
 		// The last needed thing is the window handle
 		window_cb_args args = { buffer, HWND() };

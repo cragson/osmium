@@ -6,6 +6,7 @@
 
 #include <d3d9.h>
 #include <d3dx9.h>
+#include <string>
 #pragma comment(lib, "d3d9.lib")
 #pragma comment(lib, "d3dx9.lib")
 
@@ -433,9 +434,10 @@ public:
 	/// <param name="red">   	The red color (0-255).</param>
 	/// <param name="green"> 	The green color (0-255).</param>
 	/// <param name="blue">  	The blue color (0-255).</param>
+	/// <param name="width_rect"> 	The width of the line.</param>
 	///-------------------------------------------------------------------------------------------------
 
-	void draw_rect( const int32_t x, const int32_t y, const int32_t width, const int32_t height, const int32_t red, const int32_t green, const int32_t blue );
+	void draw_rect( const int32_t x, const int32_t y, const int32_t width, const int32_t height, const int32_t red, const int32_t green, const int32_t blue, const int32_t width_rect = 1);
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Draw line.</summary>
@@ -449,9 +451,10 @@ public:
 	/// <param name="red">  	The red color (0-255).</param>
 	/// <param name="green">	The green color (0-255).</param>
 	/// <param name="blue"> 	The blue color (0-255).</param>
+	/// <param name="width"> 	The width of the line.</param>
 	///-------------------------------------------------------------------------------------------------
 
-	void draw_line( const int32_t x, const int32_t y, const int32_t x2, const int32_t y2, const int32_t red, const int32_t green, const int32_t blue );
+	void draw_line( const int32_t x, const int32_t y, const int32_t x2, const int32_t y2, const int32_t red, const int32_t green, const int32_t blue, const int32_t width = 1 );
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Draw filled rectangle.</summary>
