@@ -1003,6 +1003,16 @@ The framework contains the following modules:
             // yes yes yes I know it's local but just take it as a global overlay instance pointer 
             init_ofalai();
 
+             dx9_overlay->draw_line( 
+                400,                    // start x coordinate
+                200,                    // start y coordinate
+                450,                    // end x coordinate
+                250,                    // end y coordinate
+                0,                      // red color (0-255)
+                0,                      // green color (0-255)
+                255,                    // blue color (0-255)
+            );
+
             dx9_overlay->draw_line( 
                 400,                    // start x coordinate
                 200,                    // start y coordinate
@@ -1010,7 +1020,8 @@ The framework contains the following modules:
                 250,                    // end y coordinate
                 0,                      // red color (0-255)
                 0,                      // green color (0-255)
-                255                     // blue color (0-255)
+                255,                    // blue color (0-255)
+                2                       // width of the line (optional), default is 1
             );
         }
         ```
@@ -1033,6 +1044,17 @@ The framework contains the following modules:
                 0,                      // red color (0-255)
                 0,                      // green color (0-255)
                 255                     // blue color (0-255)
+            );
+
+            dx9_overlay->draw_rect( 
+                400,                    // start x coordinate
+                200,                    // start y coordinate
+                50,                     // width of the rect
+                100,                    // height of the rect
+                0,                      // red color (0-255)
+                0,                      // green color (0-255)
+                255,                    // blue color (0-255)
+                2                       // width of the rect (optional), default is 1
             );
         }
         ```

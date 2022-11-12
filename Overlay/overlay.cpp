@@ -3,6 +3,8 @@
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
 
+#include <numbers>
+
 LRESULT CALLBACK WinProcedure( HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam )
 {
 	static overlay* this_ptr = {};
@@ -74,7 +76,7 @@ DWORD WINAPI ThreadProc( LPVOID lpParam )
 		D3DADAPTER_DEFAULT,
 		D3DDEVTYPE_HAL,
 		this_ptr->get_overlay_window_handle(),
-		D3DCREATE_HARDWARE_VERTEXPROCESSING,
+		D3DCREATE_FPU_PRESERVE | D3DCREATE_MULTITHREADED | D3DCREATE_SOFTWARE_VERTEXPROCESSING,
 		&params,
 		nullptr,
 		&device_ptr
@@ -109,12 +111,15 @@ DWORD WINAPI ThreadProc( LPVOID lpParam )
 			TranslateMessage(&current_msg);
 		}
 
+		if (current_msg.message == WM_QUIT)
+			break;
+
 		this_ptr->move_target_window();
 
 		this_ptr->render();
-
-		Sleep( 1 );
 	}
+
+	this_ptr->get_device_as_ptr()->Release();
 
 	return 0;
 }
@@ -329,10 +334,11 @@ void overlay::draw_string( const std::string& msg, const int32_t x, const int32_
 
 	Position.left = x;
 	Position.top = y;
+
 	current_font->DrawTextA( nullptr, msg.data(), msg.size(), &Position, DT_NOCLIP, D3DCOLOR_ARGB( alpha, red, green, blue ) );
 }
 
-void overlay::draw_rect( const int32_t x, const int32_t y, const int32_t width, const int32_t height, const int32_t red, const int32_t green, const int32_t blue )
+void overlay::draw_rect( const int32_t x, const int32_t y, const int32_t width, const int32_t height, const int32_t red, const int32_t green, const int32_t blue, const int32_t width_rect )
 {
 	D3DXVECTOR2 Rect[ 5 ];
 
@@ -342,19 +348,20 @@ void overlay::draw_rect( const int32_t x, const int32_t y, const int32_t width, 
 	Rect[ 3 ] = D3DXVECTOR2( x, y + height );
 	Rect[ 4 ] = D3DXVECTOR2( x, y );
 
-	this->m_Line->SetWidth( 1 );
+	this->m_Line->SetWidth( width_rect > 0 ? width_rect : 1 );
 
 	this->m_Line->Draw( Rect, 5, D3DCOLOR_ARGB( 255, red, green, blue ) );
+
 }
 
-void overlay::draw_line( const int32_t x, const int32_t y, const int32_t x2, const int32_t y2, const int32_t red, const int32_t green, const int32_t blue )
+void overlay::draw_line( const int32_t x, const int32_t y, const int32_t x2, const int32_t y2, const int32_t red, const int32_t green, const int32_t blue, const int32_t width )
 {
 	D3DXVECTOR2 Line[ 2 ];
 
 	Line[ 0 ] = D3DXVECTOR2( x, y );
 	Line[ 1 ] = D3DXVECTOR2( x2, y2 );
 
-	this->m_Line->SetWidth( 1 );
+	this->m_Line->SetWidth( width > 0 ? width : 1 );
 
 	this->m_Line->Draw( Line, 2, D3DCOLOR_ARGB( 255, red, green, blue ) );
 }
@@ -370,5 +377,4 @@ void overlay::draw_filled_rect(const int32_t x, const int32_t y, const int32_t w
 
 void overlay::draw_circle(const int32_t x, const int32_t y, const int32_t radius, const int32_t red, const int32_t green, const int32_t blue)
 {
-	// bla bli blu
 }

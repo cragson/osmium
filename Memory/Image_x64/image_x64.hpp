@@ -198,14 +198,14 @@ public:
 
 				// prepare left side, which is the hex bytes
 				if ( j != 15 )
-					left_side += std::format( "{:02X} ", std::to_integer< uint8_t >( current_byte ) );
+					left_side += std::vformat( "{:02X} ", std::make_format_args( std::to_integer< uint8_t >( current_byte ) ) );
 				else
-					left_side += std::format( "{:02X}", std::to_integer< uint8_t >( current_byte ) );
+					left_side += std::vformat( "{:02X}", std::make_format_args( std::to_integer< uint8_t >( current_byte ) ) );
 
 				// prepare right side, which should be ascii chars etc
 				const auto rs_value = std::to_integer< uint8_t >( current_byte );
 
-				right_side += std::format( "{} ", ( rs_value >= 33 && rs_value < 127 ) ? static_cast< char >( rs_value ) : static_cast< char >( 46 ) );
+				right_side += std::vformat( "{} ", std::make_format_args( ( rs_value >= 33 && rs_value < 127 ) ? static_cast< char >( rs_value ) : static_cast< char >( 46 ) ) );
 			}
 
 			// print now the current line and a newline
