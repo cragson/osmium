@@ -22,7 +22,7 @@
         -   [How to read memory](#how-to-read-memory)
         -   [How to write memory](#how-to-write-memory)
         -   [How to search for a signature (byte pattern)](#how-to-search-for-a-signature-byte-pattern)
-        -   [How to dereference a address with image_x86 and image_x64](#how-to-dereference-a-address-with-imagex86-and-imagex64)
+        -   [How to dereference a address with image_x86 and image_x64](#how-to-dereference-a-address-with-image_x86-and-image_x64)
         -   [How to hexdump a memory region](#how-to-hexdump-a-memory-region)
         -   [How to read a ascii null terminated string](#how-to-read-a-ascii-null-terminated-string)
         -   [How to change the protection of a memory block](#how-to-change-the-protection-of-a-memory-block)
@@ -31,11 +31,19 @@
         -   [How to allocate a memory page inside of the target process with specific rights](#how-to-allocate-a-memory-page-inside-of-the-target-process-with-specific-rights)
         -   [How to create a x86 hook](#how-to-create-a-x86-hook)
         -   [How to destroy a x86 hook](#how-to-destroy-a-x86-hook)
-        -   [Inter-Process communication (IPC)](#inter-process-communication-ipc)
+        -   **[Inter-Process communication (IPC)](#inter-process-communication-ipc)**
             - [How to setup named shared memory x86](#how-to-setup-named-shared-memory-x86)
             - [How to read and write from/to the shared memory x86](#how-to-read-and-write-fromto-the-shared-memory-x86)
             - [How to clear the shared memory buffer x86](#how-to-clear-the-shared-memory-x86)
             - [How to remove named shared memory x86](#how-to-remove-named-shared-memory-x86)
+        -   **[RegisterDumper x86](#registerdumper-x86)**
+            - [How to create a register dumper x86](#how-to-create-a-register-dumper-x86)
+            - [How to start a register dumper x86](#how-to-start-a-register-dumper-x86)
+            - [How to stop a register dumper x86](#how-to-stop-a-register-dumper-x86)
+            - [How to destroy a register dumper x86](#how-to-destroy-a-register-dumper-x86)
+            - [How to check if a registercontext is active or not](#how-to-check-if-a-registercontext-is-active-or-not)
+            - [How to retrieve a pointer to a registercontext with the dumped address](#how-to-retrieve-a-pointer-to-a-registercontext-with-the-dumped-address)
+            - [How to access the registers data from the registercontext](#how-to-access-the-registers-data-from-the-registercontext)
     - [**Basic overlay implementation**](#basic-overlay-implementation)
         -   [How to setup your overlay](#how-to-setup-your-overlay)
         -   [How to draw a string](#how-to-draw-a-string)
@@ -185,6 +193,8 @@ The framework contains the following modules:
                 void tick() override;
 
                 void on_render() override;
+
+                void on_shutdown() override;
             };
         ```
         **The include path to the feature file may differ from your local folder structure!**
@@ -195,6 +205,7 @@ The framework contains the following modules:
         - `on_first_activation` will be executed when the feature gets the first time activated
         - `tick` is not called by default but should be called frequently when your feature is active, for an example look here: [How to run your cheat](#how-to-run-your-cheat).
         - `on_render` is not called by default but should be called in your overlay instance when the feature is active and wants to draw something, for an example look here: [How to run your overlay](#how-to-run-your-overlay).
+        - `on_shutdown` should be called when the cheat is shutting down, like e.g. `cheat::shutdown`.
     
     - ### **How to add new features to your cheat**
         After you did finish your feature you want to add it to your `cheat` instance, right?
@@ -929,6 +940,168 @@ The framework contains the following modules:
             else
                 printf( "failed!\n" );
             ```
+- ### **RegisterDumper x86**
+    First of all I want to explain my motivation and real use case for this feature here.
+    As this Framework is designed for external cheats some things from internal cheats aren't available easily, like e.g. function hooking and reading/writing the registers at the specific point inside the function.
+    Since today I came across multiple occasions where I didn't find a static pointer for a list but a function where all elements from the list where processed.
+    As I got no static pointer to that list, I could not simply sigscan, read and parse it like a normal external would do. 
+    And I also could not just hook the function and grab the elements by reading out the used registers like in a internal cheat.
+    Most of the time I found a workaround which allowed me to circumvent reading the used registers where the elements were stored in but there were also few times where no I couldn't find a workaround and I won't work out.
+
+    **Well, what can I imagine now under the term "RegisterDumper x86"?**
+    Obviously it's for x86 only, at the time. 
+    Also this is feature which will allow you to access all GPRs from a point in memory.
+    This works by utilizing a shared memory feature from this framework where all register content will be written to.
+    Also a 5 byte hook is placed to the given address which redirects the code flow to a little shellcode which writes the registers content into the shared memory page, which e.g. looks like this:
+    ![regdumper-dumper-sh](res/regdumper-dump-sh.png)
+
+    After writing the registers content to the shared memory page the overwritten instructions will be executed and then a jump after the placed hook follows, so make sure to not overwrite instructions which depend on a correct callstack etc..
+
+    There is an ```std::vector< std::unique_ptr< registercontext > >``` inside of the ```process``` class, which holds all created registercontext's. 
+    
+    **Now what is a registercontext?**
+    This might be a bit confusing right now because I talked only about dumper and not context's but try to think about it like the dumper is the abstract design construct I had in mind, which is integrated into the ``` process``` class by different functions for creating, starting, stopping, destroying or the vector which holds all registercontext's. 
+    A registercontext is one smaller part of the dumper, it's purpose is holding relevant data for the accessing/reading of the registers content. I can only suggest you to have a look at it's implementation inside ``` registercontext.hpp```.
+    Also a registercontext holds a pointer to the shared memory instance which belongs to it, this is so because otherwise it could not map the class for the registers onto the pointer for the shared memory page where the registers content is.
+
+    To make this more clear, here is the implementation of the ```registercontext::get_registers_data()``` function:
+    ```cpp
+    [[nodiscard]] inline auto get_registers_data() const noexcept
+	{
+		return static_cast< register_data* >( this->m_pShInstance->get_buffer_ptr() );
+	}
+    ```
+    register_data is also defined in the same header file as registercontext, so you may have a look at it.
+    Essentially it's just a class which holds unions and variables for the registers. 
+    For the moment only the GPRs like e.g. EAX, ECX, ESP, ESI are supported but I plan to add support for the FPU registers also.
+
+    Finally I want to say something about the registercontext's active status.
+    I want you to understand that just because you call e.g. ```registercontext::enable_dumper()``` will not automatically start the dumping process of the register. 
+    Please use ```process::start_register_dumper_x86``` or ```process::stop_register_dumper_x86``` functions to start or stop the dumping.
+    The difference is that when you only set the active boolean from registercontext to true there is no hook applied or otherwise no hook removed and original bytes restored, it's mainly for internal purposes that the ```process``` class knows if an registercontext should be dumped or not.
+
+    I'm sure this current state of my approach is a bit more complicated than it needed to be but just play with it yourself and get familiar with it.
+    Also I want to improve the logic and simplicity in the future.
+
+    - ### **How to create a register dumper x86**
+    The following things will happen here:
+    1. Create a shared memory instance with a custom object name for the specified adress where the register will be dumped.
+    2. Preparing the shellcode which will dump the registers content and write it to the shared memory page.
+    3. Create the hook which will redirect to the dump shellcode and jump back right after the placed hook.
+    4. Create an instance of a registercontext with the given values and enable the dumping for it.
+    5. Append the freshly created instance to the internal vector of the ```process``` class.
+    
+    ```cpp
+    // (Assume g_pProcess is a instance of process)
+	if( Globals::g_pProcess->create_register_dumper_x86( 0xDEADAFFE ) )
+		printf( "[+] Registercontext was successfully created!\n" );
+	else
+		printf( "[!] Could not create the registercontext!\n" );
+    ```
+
+    - ### **How to start a register dumper x86**
+    Here it will just hook the address again and enable the dumping, the shared memory still exists as the registercontext was not destroyed.
+
+    ```cpp
+    // (Assume g_pProcess is a instance of process)
+    if( Globals::g_pProcess->start_register_dumper_x86( 0xDEADAFFE ) )
+		printf( "[+] Dumping of the register is starting!\n" );
+	else
+		printf( "[!] Could not start the dumping of the registers!\n" );
+    ```
+    - ### **How to stop a register dumper x86**
+    Here it will destroy the placed hook, restore it's original bytes and disable the dumping for the registercontext.
+
+     ```cpp
+    // (Assume g_pProcess is a instance of process)
+    if( Globals::g_pProcess->stop_register_dumper_x86( 0xDEADAFFE ) )
+		printf( "[+] Dumping of the register is stopped!\n" );
+	else
+		printf( "[!] Could not stop the dumping of the registers!\n" );
+    ```
+
+    - ### **How to destroy a register dumper x86**
+    Here the following things will happen:
+    1. If the registercontext, which the given address belongs to, is still active stop it.
+    2. Destroy the placed hook and restore it's original bytes.
+    3. Destroy the shared memory instance.
+    4. Erase the registercontext element from the internal vector inside ```process``` class.
+    
+    ```cpp
+    // (Assume g_pProcess is a instance of process)
+	if( Globals::g_pProcess->destroy_register_dumper_x86( 0xDEADAFFE ) )
+		printf( "[+] Registercontext was successfully destroyed!\n" );
+	else
+		printf( "[!] Could not destroy the registercontext!\n" );
+    ```
+    - ### **How to check if a registercontext is active or not**
+     ```cpp
+    // (Assume g_pProcess is a instance of process)
+    if( Globals::g_pProcess->is_active_register_dumper_x86( 0xDEADAFFE ) )
+		printf( "[+] Dumping of the registers is active!\n" );
+	else
+		printf( "[!] Dumping of the registers is not active!\n" );
+    ```
+
+    - ### **How to retrieve a pointer to a registercontext with the dumped address**
+    Make sure to **always** validate the pointer you retrieve!
+
+    ```cpp
+    // (Assume g_pProcess is a instance of process)
+    const auto ptr = Globals::g_pProcess->get_register_dumper_x86_ptr( 0xDEADAFFE );
+
+    if( ptr != nullptr )
+		printf( "[+] Registercontext pointer is valid!\n" );
+	else
+		printf( "[!] Registercontext is not valid!\n" );
+    ```
+
+    - ### **How to access the registers data from the registercontext**
+     Make sure to **always** validate the pointer you retrieve!
+    ```cpp
+    // (Assume g_pProcess is a instance of process)
+
+    const auto reg_data = Globals::g_pProcess->get_data_from_registers_x86( 0xDEADAFFE );
+
+	const auto is_active = Globals::g_pProcess->is_active_register_dumper_x86( 0xDEADAFFE );
+
+	if( reg_data != nullptr && is_active )
+	{
+		printf("[+] Dumped Registers from: 0x%08X\n", 0xDEADAFFE);
+
+		printf("EAX -> 0x%08X\n", reg_data->EAX.eax);
+		printf("\tAX -> 0x%04X\n", reg_data->EAX.ax);
+		printf("\tAH, AL -> 0x%02X, 0x%02X\n", reg_data->EAX.a[0], reg_data->EAX.a[1]);
+
+		printf("EBX -> 0x%08X\n", reg_data->EBX.ebx);
+		printf("\tBX -> 0x%04X\n", reg_data->EBX.bx);
+		printf("\tBH, BL -> 0x%02X, 0x%02X\n", reg_data->EBX.b[0], reg_data->EBX.b[1]);
+
+		printf("ECX -> 0x%08X\n", reg_data->ECX.ecx);
+		printf("\tCX -> 0x%04X\n", reg_data->ECX.cx);
+		printf("\tCH, CL -> 0x%02X, 0x%02X\n", reg_data->ECX.c[0], reg_data->ECX.c[1]);
+
+		printf("EDX -> 0x%08X\n", reg_data->EDX.edx);
+		printf("\tDX -> 0x%04X\n", reg_data->EDX.dx);
+		printf("\tDH, DL -> 0x%02X, 0x%02X\n", reg_data->EDX.d[0], reg_data->EDX.d[1]);
+
+		printf("ESP -> 0x%08X\n", reg_data->ESP.esp);
+		printf("\tSP -> 0x%04X\n", reg_data->ESP.sp);
+
+		printf("EBP -> 0x%08X\n", reg_data->EBP.ebp);
+		printf("\tBP -> 0x%04X\n", reg_data->EBP.bp);
+
+		printf("ESI -> 0x%08X\n", reg_data->ESI.esi);
+		printf("\tSI -> 0x%04X\n", reg_data->ESI.si);
+
+		printf("EDI -> 0x%08X\n", reg_data->EDI.edi);
+		printf("\tDI -> 0x%04X\n", reg_data->EDI.di);
+    }
+    ```
+    Which would result in something like this:
+
+    ![regdumper-regdata](res/regdumper-regdata.png)
+
 - ### **Basic overlay implementation**
     - ### **How to setup your overlay**
         You can either initialize your overlay by using the window title of the target process or a window handle.
