@@ -474,6 +474,14 @@ public:
 
 	virtual void on_render() = 0;
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	The virtual function which should be called when the shutdown function of the cheat was called. </summary>
+	///
+	/// <remarks>	cragson, 23/12/2022. </remarks>
+	///-------------------------------------------------------------------------------------------------
+
+	virtual void on_shutdown() = 0;
+
 protected:
 	bool m_status;
 

@@ -13,6 +13,7 @@
 
 #include "../Hook/hook.hpp"
 #include "../SharedMemoryInstance/sharedmemoryinstance.hpp"
+#include "../RegisterDumper/registercontext.hpp"
 
 class process
 {
@@ -52,6 +53,16 @@ public:
 
 	bool shutdown()
 	{
+		// make sure no memory will be leaked, by destroying all registered contexts 
+		// first you should clear all registered contexts because their hooks and shared memory instances
+		// will be also destroyed.
+		// if you destroy the hooks or the sh instances first the destroy function of the register contexts will fail
+		// resulting in unwanten behaviour  
+		if( !this->m_register_dumper.empty() )
+			for( const auto& reg_ctx : this->m_register_dumper )
+				if( !this->destroy_register_dumper_x86( reg_ctx->get_dumped_address() ) )
+					return false;
+
 		// make sure no memory will be leaked, by unhooking existent hooks
 		if( !this->m_hooks.empty() )
 			for( const auto& hk : this->m_hooks )
@@ -63,6 +74,10 @@ public:
 			for( const auto& sh_inst : this->m_sh_instances )
 				if( !this->destroy_shared_memory_instance_x86( sh_inst->get_object_name() ) )
 					return false;
+
+		// clear the whole image map from the target process
+		if ( !this->m_images.empty() )
+			this->m_images.clear();
 
 		return true;
 	}
@@ -777,6 +792,127 @@ public:
 		return &this->m_sh_instances;
 	}
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Creates a new registercontext for the given address and stores it's new instance inside the internal vector for the registercontext's. Also all registercontext's are started by default. </summary>
+	///
+	/// <remarks>	cragson, 23/12/2022. </remarks>
+	///
+	/// <param name="dumped_address">	The address where the register should be dumped from. </param>
+	/// <param name="hook_size">	 	(Optional) Size of the hook in bytes. </param>
+	///
+	/// <returns>	True if it succeeds, false if it fails. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool create_register_dumper_x86( std::uintptr_t dumped_address, size_t hook_size = 5 );
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>
+	/// 	Destroys a registercontext instance by unhooking it and destroying the shared memory instance, also erases it from the interal vector for the registercontext's.
+	/// </summary>
+	///
+	/// <remarks>	cragson, 23/12/2022. </remarks>
+	///
+	/// <param name="dumped_address">	The dumped address of the registercontext which should be destroyed. </param>
+	///
+	/// <returns>	True if it succeeds, false if it fails. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool destroy_register_dumper_x86( std::uintptr_t dumped_address );
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Sets the registercontext with the given address active and starting the dumping. </summary>
+	///
+	/// <remarks>	cragson, 23/12/2022. </remarks>
+	///
+	/// <param name="dumped_address">	The dumped address of the registercontext which should be started. </param>
+	///
+	/// <returns>	True if it succeeds, false if it fails. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool start_register_dumper_x86( std::uintptr_t dumped_address );
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Sets the registercontext with the given address inactive and stop the dumping. </summary>
+	///
+	/// <remarks>	cragson, 23/12/2022. </remarks>
+	///
+	/// <param name="dumped_address">	The dumped address of the registercontext which should be stopped. </param>
+	///
+	/// <returns>	True if it succeeds, false if it fails. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool stop_register_dumper_x86( std::uintptr_t dumped_address );
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Checks if a registercontext exists with a given address and which is active. </summary>
+	///
+	/// <remarks>	cragson, 23/12/2022. </remarks>
+	///
+	/// <param name="dumped_address">	The dumped address of the registercontext. </param>
+	///
+	/// <returns>	True if a registercontext exists for the given address and is active, false if not. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] auto is_active_register_dumper_x86( const std::uintptr_t dumped_address ) const noexcept
+	{
+		return std::ranges::find_if(
+			this->m_register_dumper.begin(),
+			this->m_register_dumper.end(),
+			[&dumped_address]( const std::unique_ptr< registercontext >& re )
+			{
+				return re->get_dumped_address() == dumped_address && re->is_dumper_active();
+			}
+		) != this->m_register_dumper.end();
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Retrieves the pointer to the registercontext class of a given dumped address which belongs to the registercontext. </summary>
+	///
+	/// <remarks>	cragson, 23/12/2022. </remarks>
+	///
+	/// <param name="dumped_address">	The dumped address of the registercontext. </param>
+	///
+	/// <returns>	Nullpointer if it fails, else the registercontext pointer. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] registercontext* get_register_dumper_x86_ptr( const std::uintptr_t dumped_address ) const noexcept
+	{
+		const auto ret = std::ranges::find_if(
+			this->m_register_dumper.begin(),
+			this->m_register_dumper.end(),
+			[&dumped_address]( const std::unique_ptr< registercontext >& re )
+			{
+				return re->get_dumped_address() == dumped_address && re->is_dumper_active();
+			}
+		);
+
+		return ret != this->m_register_dumper.end() ? ret->get() : nullptr;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Retrieves the pointer to the register_data class of a registercontext by searching for the given dumped address in the internal vector of registercontext's. </summary>
+	///
+	/// <remarks>	cragson, 23/12/2022. </remarks>
+	///
+	/// <param name="dumped_address">	The dumped address of the registercontext. </param>
+	///
+	/// <returns>	Nullpointer if it fails, else the register_data pointer. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] register_data* get_data_from_registers_x86( const std::uintptr_t dumped_address ) const noexcept
+	{
+		const auto ret = std::ranges::find_if(
+			this->m_register_dumper.begin(),
+			this->m_register_dumper.end(),
+			[&dumped_address]( const std::unique_ptr< registercontext >& re )
+			{
+				return re->get_dumped_address() == dumped_address && re->is_dumper_active();
+			}
+		);
+
+		return ret != this->m_register_dumper.end() ? ret->get()->get_registers_data() : nullptr;
+	}
+
 private:
 	HANDLE m_handle;
 
@@ -793,4 +929,6 @@ private:
 	std::vector< std::unique_ptr< hook > > m_hooks;
 
 	std::vector< std::unique_ptr< shared_memory_instance > > m_sh_instances;
+
+	std::vector< std::unique_ptr< registercontext > > m_register_dumper;
 };
