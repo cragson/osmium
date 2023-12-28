@@ -1,5 +1,6 @@
 #include "process.hpp"
 #include <TlHelp32.h>
+#include <algorithm>
 
 struct window_cb_args
 {
