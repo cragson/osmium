@@ -482,6 +482,11 @@ public:
 		return this->m_images.begin()->second.get();
 	}
 
+	[[nodiscard]] inline auto get_images_ptr() const noexcept
+	{
+		return &this->m_images;
+	}
+
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Gets the size of the internal image map, it tells how many images were dumped.</summary>
 	///
@@ -912,6 +917,18 @@ public:
 
 		return ret != this->m_register_dumper.end() ? ret->get()->get_registers_data() : nullptr;
 	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Injects a external dll into another process, utilizing the LoadLibrary technique. </summary>
+	///
+	/// <remarks>	cragson, 09/07/2024. </remarks>
+	///
+	/// <param name="dll_path">	The full path of the dll, which will be injected. </param>
+	///
+	/// <returns>	True if it injected successfully and false if it fails. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool inject_dll_load_library(const std::string& dll_path);
 
 private:
 	HANDLE m_handle;

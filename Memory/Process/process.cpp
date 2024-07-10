@@ -312,7 +312,7 @@ bool process::read_image( byte_vector* dest_vec, const std::wstring& image_name 
 bool process::create_hook_x86( const std::uintptr_t start_address, const size_t size,
                                const std::vector< uint8_t >& shellcode )
 {
-	if( start_address < 0 || size < 0 || shellcode.empty() )
+	if( start_address < 0 || size < 5 || shellcode.empty() )
 		return false;
 
 	// allocate a read-write-execute memory page in the target process
@@ -1074,6 +1074,43 @@ bool process::stop_register_dumper_x86( const std::uintptr_t dumped_address )
 
 	// disable now the dumper
 	existing_ctx->get()->disable_dumper();
+
+	return true;
+}
+
+bool process::inject_dll_load_library(const std::string& dll_path)
+{
+	// Allocate memory which will hold the dll path
+	const auto mem_dll = this->allocate_page_in_process(PAGE_READWRITE, dll_path.size() + 1);
+
+	if (!mem_dll)
+		return false;
+
+	// Write the DLL path to the allocated memory
+	if (!WriteProcessMemory(this->get_process_handle(), mem_dll, dll_path.c_str(), dll_path.size() + 1, NULL))
+		return false;
+
+	// Get a handle to the library where the needed function pointer is located at
+	const auto module_handle = GetModuleHandleA("kernel32.dll");
+
+	if (!module_handle)
+		return false;
+
+	// Get the address of LoadLibraryA in kernel32.dll
+	const auto loadlib_a = (LPVOID)GetProcAddress(module_handle, "LoadLibraryA");
+	if (!loadlib_a)
+		return false;
+
+	// Create a remote thread that calls LoadLibraryA with our DLL path as its argument
+	const auto remote_thread = CreateRemoteThread(this->get_process_handle(), NULL, NULL, (LPTHREAD_START_ROUTINE)loadlib_a, mem_dll, NULL, NULL);
+	if (!remote_thread)
+		return false;
+
+	// Wait for the remote thread to complete
+	WaitForSingleObject(remote_thread, INFINITE);
+
+	// Clean up
+	VirtualFreeEx(this->get_process_handle(), mem_dll, NULL, MEM_RELEASE);
 
 	return true;
 }

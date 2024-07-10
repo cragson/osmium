@@ -1,6 +1,23 @@
-# **osmium**
-**The following content may change frequently due to the updates of the framework and might be not up2date at all times.**
+![osmium-logo](res/osmium-logo.png)
 
+# **osmium** - A Framework for Windows external cheats, written in modern C++.
+
+- ##  **Used in many of my own open-source external cheat projects, actively maintained and always aimed for fitting my personal needs when developing an external cheat. (See below for my cheat projects)**
+    - **[Borderlands GOTY Enhanced](https://github.com/cragson/bl-goty-external)**
+    - **[Call of Duty Black Ops - Zombie mode](https://github.com/cragson/bo1-fun)**
+    - **[Call of Duty Modern Warfare 3 - Survival mode](https://github.com/cragson/mw3-surviv0r)**
+    - **[Crysis 2 - Remastered](https://github.com/cragson/crysis2-external)**
+    - **[Dead Island - Definitive edition](https://github.com/cragson/dead-island-external)**
+    - **[Dead Rising 2](https://github.com/cragson/dead-rising-2-external)**
+    - **[DOOM Eternal](https://github.com/cragson/doom-eternal-cheat)**
+    - **[Far Cry 4](https://github.com/cragson/far-cry-4-external)**
+    - **[Magicite](https://github.com/cragson/magicite-external)**
+    - **[Pokemon Mystery Dungeon Rescue Team Red (mGBA)](https://gthub.com/cragson/pkm-md-red)**
+    - **[Risen](https://github.com/cragson/risen-external)**
+    - **[Terraria](https://github.com/cragson/terraria-external)**
+
+
+**The following content may change frequently due to the updates of the framework and might be not up2date at all times.**
 
 # **Table of Contents**
 1. **[A small foreword](#foreword)**
@@ -31,6 +48,7 @@
         -   [How to allocate a memory page inside of the target process with specific rights](#how-to-allocate-a-memory-page-inside-of-the-target-process-with-specific-rights)
         -   [How to create a x86 hook](#how-to-create-a-x86-hook)
         -   [How to destroy a x86 hook](#how-to-destroy-a-x86-hook)
+        -   [How to inject a DLL with LoadLibrary](#how-to-inject-a-dll-with-loadlibrary)
         -   **[Inter-Process communication (IPC)](#inter-process-communication-ipc)**
             - [How to setup named shared memory x86](#how-to-setup-named-shared-memory-x86)
             - [How to read and write from/to the shared memory x86](#how-to-read-and-write-fromto-the-shared-memory-x86)
@@ -120,12 +138,12 @@ To compile a project with this framework you need to prepare some things before.
     *   You need to enter your DirectX Libraries path under **Library Directories**
     *   Also make sure to do these changes for all configurations (Debug and Release) and the correct Platform!
     *   Another thing to watch out for is the correct library path from DirectX for your current platform!
-    *   ![Project Settings](/res/project-settings.png)
-    *   ![DirectX Linking](/res/project-directx-linking.png)
+    *   ![Project Settings](res/project-settings.png)
+    *   ![DirectX Linking](res/project-directx-linking.png)
 2. **Make sure to set the correct C++ Language Standard**
     * Go to **Project** -> **Properties** -> **General**
     * Try setting the **C++ Language Standard** to **/std:c++20**, if this won't work for some reason try setting it to **/std:c++latest**
-    * ![C++ Language Standard](/res/project-settings-language.png)
+    * ![C++ Language Standard](res/project-settings-language.png)
 
 After these steps you should be able to successfully compile.
 ## **Design of the framework**
@@ -841,13 +859,139 @@ The framework contains the following modules:
             // to unhook the shit
             const std::uintptr_t target_function = fancy_base + 0xAFFE;
 
-            // U N H OO K
+            // U N H O O K
             if( g_pProcess->destroy_hook_x86( target_function ) )
                 printf( "[!] Successfully unhooked :^)!\n" );
             else
                 printf( "[!] MAYDAY MAYDAY error hello hi hallo holla bonjour!\n" );
         }
         ```
+    - ### **How to inject a DLL with LoadLibrary**
+        Just provide a valid path of the dll, which you want to inject into the target process, to the function `inject_dll_load_library`.
+
+        ```cpp
+        void demo_loadlib()
+        {
+            const auto proc = std::make_unique< process >();
+
+            if (!proc->setup_process(L"dummy.exe"))
+                return;
+
+            std::println("[+] pid: {}\n", proc->get_process_id());
+
+            if (!proc->inject_dll_load_library("C:\\Users\\craaaaaaaaaaaaagson\\Desktop\\test.dll"))
+                return;
+
+            std::println("[+] Succesfully injected dll into process");
+        }
+        ```
+    - ### **How to get a pointer to the DOS header of an image**
+        ```cpp
+        void demo_dos_header()
+        {
+            const auto proc = std::make_unique< process >();
+
+            if (!proc->setup_process(L"dummy.exe"))
+                return;
+
+            std::println("[+] pid: {}\n", proc->get_process_id());
+
+            const auto img_ptr = proc->get_image_ptr_by_name(L"dummy.exe");
+
+            if (!img_ptr)
+                return;
+
+            const auto dos_ptr = img_ptr->get_dos_header_ptr();
+
+            if (!dos_ptr)
+                return;
+
+            std::println("[+] magic: {:04X}", dos_ptr->e_magic);
+        }
+        ```
+    - ### **How to get a pointer to the NT headers of an image**
+    ```cpp
+    void demo_nt_headers()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto img_ptr = proc->get_image_ptr_by_name(L"dummy.exe");
+
+        if (!img_ptr)
+            return;
+
+        const auto nt_ptr = img_ptr->get_nt_headers_ptr();
+
+        if (!nt_ptr)
+            return;
+
+        std::println("[+] machine {:04X}", nt_ptr->FileHeader.Machine);
+    }
+    ```
+    - ### **How to get a pointer to the import descriptor of an image**
+    ```cpp
+    void demo_import_descriptor()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto img_ptr = proc->get_image_ptr_by_name(L"dummy.exe");
+
+        if (!img_ptr)
+            return;
+
+        const auto id = img_ptr->get_import_descriptor();
+
+        if (!id)
+            return;
+
+        std::println("[+] import descriptor ptr: 0x{:08X}", reinterpret_cast< std::uintptr_t >( id ) );
+    }
+    ```
+    - ### **How to parse/retrieve all imports of an image**
+    For this case you can use the function `get_imports` of either `image_x64` or `image_x86`.
+    It will return a `std::vector< std::tuple< std::string, std::string, std::uintptr_t > >`, which basically is a big list of all imports in the Import Address Table (IAT) of an image.
+    The first string is the name of the image, from where the function is imported.
+    The second string is the name of the function, which is imported.
+    The last element of the tuple is pointer to the imported function, which can be used for IAT hooking etc.
+    This function works for both `image_x64` and `image_x86`.
+
+    Here is an example of how you can print out all entries from the IAT in a easy way:
+    ```cpp
+    void demo_image_iat()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto img_ptr = proc->get_image_ptr_by_name(L"dummy.exe");
+
+        if (!img_ptr)
+            return;
+
+        const auto imports = img_ptr->get_imports();
+
+        if (imports.empty())
+            return;
+
+        for (const auto& [img, fn_name, fn_ptr] : imports)
+            std::println("[#] {}::{} -> 0x{:08X}", img, fn_name, fn_ptr);
+
+        std::println("\n[+] Parsed {} imports", imports.size());
+    }
+    ```
     - ### **Inter-Process Communication (IPC)**
         - ### **How to setup named shared memory x86**
             First you need a object name for the Named Shared Memory, if you want to use a "Global\\XXX" name: **Make sure to have the proper rights on both sides (cheat and game process)**, otherwise the function will **fail**!
