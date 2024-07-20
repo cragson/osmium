@@ -4,6 +4,7 @@
 #include <memory>
 #include <unordered_map>
 #include <ranges>
+#include <winternl.h>
 
 #ifdef _WIN64
 #include "../Image_x64/image_x64.hpp"
@@ -929,6 +930,46 @@ public:
 	///-------------------------------------------------------------------------------------------------
 
 	[[nodiscard]] bool inject_dll_load_library(const std::string& dll_path);
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Retreives a pointer to the PEB of the target process. </summary>
+	///
+	/// <remarks>	cragson, 19/07/2024. </remarks>
+	///
+	/// <returns>	The peb pointer. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] std::uintptr_t get_peb_ptr();
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Dumps the PEB out of the memory from the target process. </summary>
+	///
+	/// <remarks>	cragson, 19/07/2024. </remarks>
+	///
+	/// <returns>	The peb structure. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] PEB get_peb();
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Reads the image base address member of the PEB struct from the target process. </summary>
+	///
+	/// <remarks>	cragson, 19/07/2024. </remarks>
+	///
+	/// <returns>	The peb image base address. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] std::uintptr_t get_peb_image_base_address() noexcept;
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Walks the InMemoryOrderModuleList of the PEB of the target process and stores all loaded module information in a vector. </summary>
+	///
+	/// <remarks>	cragson, 19/07/2024. </remarks>
+	///
+	/// <returns>	The std::vector of module information from InMemoryOrderModuleList inside the PEB. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] std::vector< std::tuple< std::string, std::uintptr_t, size_t > > get_modules_from_peb();
 
 private:
 	HANDLE m_handle;

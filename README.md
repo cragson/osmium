@@ -49,6 +49,15 @@
         -   [How to create a x86 hook](#how-to-create-a-x86-hook)
         -   [How to destroy a x86 hook](#how-to-destroy-a-x86-hook)
         -   [How to inject a DLL with LoadLibrary](#how-to-inject-a-dll-with-loadlibrary)
+		-	[How to get a pointer to the DOS header of an image](#how-to-get-a-pointer-to-the-dos-header-of-an-image)
+        -   [How to get a pointer to the NT headers of an image](#how-to-get-a-pointer-to-the-nt-headers-of-an-image)
+        -   [How to get a pointer to the import descriptor of an image](#how-to-get-a-pointer-to-the-import-descriptor-of-an-image)
+        -   [How to parse/retrieve all imports of an image](#how-to-parseretrieve-all-imports-of-an-image)
+        -   [How to get a pointer to the Process Environment Block (PEB) of the target process](#how-to-get-a-pointer-to-the-process-environment-block-peb-of-the-target-process)
+        -   [How to retreive the PEB from the target process](#how-to-retreive-the-peb-from-the-target-process)
+        -   [How to retreive the ImageBaseAddress of the PEB from the target process](#how-to-retreive-the-imagebaseaddress-of-the-peb-from-the-target-process)
+        -   [How to retreive all modules inside InMemoryOrderModuleList of the PEB from the target process](#how-to-retreive-all-modules-inside-inmemoryordermodulelist-of-the-peb-from-the-target-process)
+        -   [How to search for specific imports inside all modules from InMemoryOrderModuleList of the PEB from the target process](#how-to-search-for-specific-imports-inside-all-modules-from-inmemoryordermodulelist-of-the-peb-from-the-target-process)
         -   **[Inter-Process communication (IPC)](#inter-process-communication-ipc)**
             - [How to setup named shared memory x86](#how-to-setup-named-shared-memory-x86)
             - [How to read and write from/to the shared memory x86](#how-to-read-and-write-fromto-the-shared-memory-x86)
@@ -990,6 +999,123 @@ The framework contains the following modules:
             std::println("[#] {}::{} -> 0x{:08X}", img, fn_name, fn_ptr);
 
         std::println("\n[+] Parsed {} imports", imports.size());
+    }
+    ```
+    - ### **How to get a pointer to the Process Environment Block (PEB) of the target process**
+    ```cpp
+    void lab()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto peb_ptr = proc->get_peb_ptr();
+
+        if (!peb_ptr)
+            return;
+
+        std::println("[+] peb: 0x{:X}", peb_ptr);
+    }
+    ```
+    - ### **How to retreive the PEB from the target process**
+    ```cpp
+    void lab()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto peb = proc->get_peb();
+
+        std::println("[+] PEB::Ldr -> 0x{:X}", reinterpret_cast< std::uintptr_t >( peb.Ldr ) );
+    }
+    ```
+    - ### **How to retreive the ImageBaseAddress of the PEB from the target process**
+    ```cpp
+    void lab()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"firefox.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto peb_image_addr = proc->get_peb_image_base_address();
+
+        std::println( "[+] PEB::ImageBaseAddress -> 0x{:X}", peb_image_addr );
+    }
+    ```
+    - ### **How to retreive all modules inside InMemoryOrderModuleList of the PEB from the target process**
+    ```cpp
+    void lab()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto modules = proc->get_modules_from_peb();
+
+        for (const auto& [module_name, module_base, module_size] : modules)
+            std::println("{} -> 0x{:X} ({} bytes)", module_name, module_base, module_size);
+    }
+    ```
+    - ### **How to search for specific imports inside all modules from InMemoryOrderModuleList of the PEB from the target process**
+    ```cpp
+    void lab()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"firefox.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto modules = proc->get_modules_from_peb();
+
+        for (const auto& [module_name, module_base, module_size] : modules)
+        {
+            std::println("{} -> 0x{:X} ({} bytes)", module_name, module_base, module_size);
+
+            const auto temp = std::make_unique< image_x64 >(module_base, module_size);
+            
+            const auto module_name_w = std::wstring(module_name.begin(), module_name.end());
+
+            if (!ReadProcessMemory(
+                proc->get_process_handle(), 
+                reinterpret_cast< LPCVOID >( module_base ), 
+                temp->get_byte_vector_ptr()->data(), 
+                module_size, nullptr
+            ))
+                continue;
+
+            const auto imports = temp->get_imports();
+
+            if (imports.empty())
+                continue;
+
+            std::ranges::for_each( imports, [&](const auto& tup)
+                {
+                    std::apply( [](const auto& image_name, const auto& fn_name, const auto& fn_ptr) 
+                        {
+                            // replace Nt here with the substring you want to filter for in the imports of the modules
+                            if (fn_name.contains("Nt"))
+                                std::println("{}::{} -> 0x{:X}", image_name, fn_name, fn_ptr);
+                        }, tup);
+                }
+                );
+
+            std::println("");
+        }
     }
     ```
     - ### **Inter-Process Communication (IPC)**

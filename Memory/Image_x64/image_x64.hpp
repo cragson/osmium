@@ -42,7 +42,7 @@ public:
 		this->m_size = image_size;
 
 		this->m_bytes = byte_vector();
-		this->m_bytes.reserve(image_size);
+		this->m_bytes.resize(image_size);
 	}
 
 	///-------------------------------------------------------------------------------------------------
@@ -233,15 +233,28 @@ public:
 
 			while (thunk->u1.AddressOfData)
 			{
-				const auto import_name = thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG
-					? std::to_string(IMAGE_ORDINAL(orig_thunk->u1.Ordinal))
-					: std::string(reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(this->m_bytes.data() + orig_thunk->u1.AddressOfData)->Name);
+				std::string import_name = {};
 
-				ret.emplace_back(
-					module_name, 
-					import_name,
-					thunk->u1.Function
-				);
+				if (thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)
+				{
+					// weird fix for handling incorrect values in orig_thunk like e.g.: 0x8000000000000008, 0x8000000000000005 etc.
+					// need to do more research what this means and why this happens
+					if (orig_thunk->u1.Ordinal && !(orig_thunk->u1.Ordinal & 0x8000000000000000))
+						import_name = std::to_string(IMAGE_ORDINAL(orig_thunk->u1.Ordinal));
+				}
+				else
+				{
+					// weird fix for handling incorrect values in orig_thunk like e.g.: 0x8000000000000008, 0x8000000000000005 etc.
+					if( orig_thunk->u1.AddressOfData && !(orig_thunk->u1.AddressOfData & 0x8000000000000000))
+						import_name = std::string(reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(this->m_bytes.data() + orig_thunk->u1.AddressOfData)->Name);
+				}
+
+				if( !import_name.empty())
+					ret.emplace_back(
+						module_name, 
+						import_name,
+						thunk->u1.Function
+					);
 
 				++thunk;
 				++orig_thunk;

@@ -1114,3 +1114,109 @@ bool process::inject_dll_load_library(const std::string& dll_path)
 
 	return true;
 }
+
+std::uintptr_t process::get_peb_ptr()
+{
+	typedef NTSTATUS(NTAPI* pfnNtQueryInformationProcess)(
+		IN  HANDLE ProcessHandle,
+		IN  PROCESSINFOCLASS ProcessInformationClass,
+		OUT PVOID ProcessInformation,
+		IN  ULONG ProcessInformationLength,
+		OUT PULONG ReturnLength    OPTIONAL
+		);
+
+	const auto ntdll = LoadLibraryA("ntdll.dll");
+	if (ntdll == NULL)
+		return {};
+
+	const auto fn_NtQueryInformationProcess = (pfnNtQueryInformationProcess)GetProcAddress(ntdll, "NtQueryInformationProcess");
+
+	PROCESS_BASIC_INFORMATION pbi = {};
+
+	const auto ret = fn_NtQueryInformationProcess( this->m_handle, ProcessBasicInformation, &pbi, sizeof(pbi), nullptr);
+
+	if (!NT_SUCCESS(ret) || !pbi.PebBaseAddress)
+		return {};
+
+	return reinterpret_cast<std::uintptr_t>(pbi.PebBaseAddress);
+}
+
+PEB process::get_peb()
+{
+	const auto peb_ptr = this->get_peb_ptr();
+
+	if (!peb_ptr)
+		return {};
+
+	return this->read< PEB >( peb_ptr );
+}
+
+std::uintptr_t process::get_peb_image_base_address() noexcept
+{
+	const auto peb = this->get_peb();
+
+	return peb.Reserved3[1] != nullptr ? reinterpret_cast<std::uintptr_t>(peb.Reserved3[1]) : std::uintptr_t();
+
+	return std::uintptr_t();
+}
+
+std::vector<std::tuple<std::string, std::uintptr_t, size_t>> process::get_modules_from_peb()
+{
+	std::vector<std::tuple<std::string, std::uintptr_t, size_t>> ret = {};
+
+	const auto peb = this->get_peb();
+
+	PEB_LDR_DATA ldr = {};
+
+	if (!ReadProcessMemory(this->m_handle, peb.Ldr, &ldr, sizeof(ldr), nullptr))
+		return ret;
+
+	const auto ldr_head = ldr.InMemoryOrderModuleList.Flink;
+	auto ldr_current = ldr_head;
+
+	do
+	{
+		const auto ldr_data_current = this->read< LDR_DATA_TABLE_ENTRY >(
+			reinterpret_cast<std::uintptr_t>(ldr_current) - sizeof(LIST_ENTRY)
+		);
+
+		const auto path_size = ldr_data_current.FullDllName.Length / sizeof(wchar_t);
+
+		std::vector< wchar_t > full_dll_name = {};
+		full_dll_name.resize(path_size);
+
+		if (!ReadProcessMemory(
+			this->m_handle, 
+			ldr_data_current.FullDllName.Buffer, 
+			full_dll_name.data(), 
+			ldr_data_current.FullDllName.Length, 
+			nullptr)
+			)
+			break;
+
+		full_dll_name.emplace_back(L'\0');
+
+		const auto image_name_w = std::wstring(full_dll_name.data());
+
+		const auto image_name_a = std::string(image_name_w.begin(), image_name_w.end());
+
+		const auto image_base = reinterpret_cast<std::uintptr_t>(ldr_data_current.DllBase);
+		const auto image_size = reinterpret_cast<size_t>(ldr_data_current.Reserved3[1]);
+
+		if (image_base && image_size)
+		{
+			ret.emplace_back(
+				image_name_a,
+				image_base,
+				image_size
+			);
+		}
+
+		const auto ldr_temp = this->read< LIST_ENTRY >(reinterpret_cast<std::uintptr_t>(ldr_current));
+
+		ldr_current = ldr_temp.Flink;
+		
+	} while (ldr_current != ldr_head);
+
+	return ret;
+}
