@@ -1,6 +1,23 @@
-# **osmium**
-**The following content may change frequently due to the updates of the framework and might be not up2date at all times.**
+![osmium-logo](res/osmium-logo.png)
 
+# **osmium** - A Framework for Windows external cheats, written in modern C++.
+
+- ##  **Used in many of my own open-source external cheat projects, actively maintained and always aimed for fitting my personal needs when developing an external cheat. (See below for my cheat projects)**
+    - **[Borderlands GOTY Enhanced](https://github.com/cragson/bl-goty-external)**
+    - **[Call of Duty Black Ops - Zombie mode](https://github.com/cragson/bo1-fun)**
+    - **[Call of Duty Modern Warfare 3 - Survival mode](https://github.com/cragson/mw3-surviv0r)**
+    - **[Crysis 2 - Remastered](https://github.com/cragson/crysis2-external)**
+    - **[Dead Island - Definitive edition](https://github.com/cragson/dead-island-external)**
+    - **[Dead Rising 2](https://github.com/cragson/dead-rising-2-external)**
+    - **[DOOM Eternal](https://github.com/cragson/doom-eternal-cheat)**
+    - **[Far Cry 4](https://github.com/cragson/far-cry-4-external)**
+    - **[Magicite](https://github.com/cragson/magicite-external)**
+    - **[Pokemon Mystery Dungeon Rescue Team Red (mGBA)](https://gthub.com/cragson/pkm-md-red)**
+    - **[Risen](https://github.com/cragson/risen-external)**
+    - **[Terraria](https://github.com/cragson/terraria-external)**
+
+
+**The following content may change frequently due to the updates of the framework and might be not up2date at all times.**
 
 # **Table of Contents**
 1. **[A small foreword](#foreword)**
@@ -22,7 +39,7 @@
         -   [How to read memory](#how-to-read-memory)
         -   [How to write memory](#how-to-write-memory)
         -   [How to search for a signature (byte pattern)](#how-to-search-for-a-signature-byte-pattern)
-        -   [How to dereference a address with image_x86 and image_x64](#how-to-dereference-a-address-with-imagex86-and-imagex64)
+        -   [How to dereference a address with image_x86 and image_x64](#how-to-dereference-a-address-with-image_x86-and-image_x64)
         -   [How to hexdump a memory region](#how-to-hexdump-a-memory-region)
         -   [How to read a ascii null terminated string](#how-to-read-a-ascii-null-terminated-string)
         -   [How to change the protection of a memory block](#how-to-change-the-protection-of-a-memory-block)
@@ -31,11 +48,29 @@
         -   [How to allocate a memory page inside of the target process with specific rights](#how-to-allocate-a-memory-page-inside-of-the-target-process-with-specific-rights)
         -   [How to create a x86 hook](#how-to-create-a-x86-hook)
         -   [How to destroy a x86 hook](#how-to-destroy-a-x86-hook)
-        -   [Inter-Process communication (IPC)](#inter-process-communication-ipc)
+        -   [How to inject a DLL with LoadLibrary](#how-to-inject-a-dll-with-loadlibrary)
+		-	[How to get a pointer to the DOS header of an image](#how-to-get-a-pointer-to-the-dos-header-of-an-image)
+        -   [How to get a pointer to the NT headers of an image](#how-to-get-a-pointer-to-the-nt-headers-of-an-image)
+        -   [How to get a pointer to the import descriptor of an image](#how-to-get-a-pointer-to-the-import-descriptor-of-an-image)
+        -   [How to parse/retrieve all imports of an image](#how-to-parseretrieve-all-imports-of-an-image)
+        -   [How to get a pointer to the Process Environment Block (PEB) of the target process](#how-to-get-a-pointer-to-the-process-environment-block-peb-of-the-target-process)
+        -   [How to retreive the PEB from the target process](#how-to-retreive-the-peb-from-the-target-process)
+        -   [How to retreive the ImageBaseAddress of the PEB from the target process](#how-to-retreive-the-imagebaseaddress-of-the-peb-from-the-target-process)
+        -   [How to retreive all modules inside InMemoryOrderModuleList of the PEB from the target process](#how-to-retreive-all-modules-inside-inmemoryordermodulelist-of-the-peb-from-the-target-process)
+        -   [How to search for specific imports inside all modules from InMemoryOrderModuleList of the PEB from the target process](#how-to-search-for-specific-imports-inside-all-modules-from-inmemoryordermodulelist-of-the-peb-from-the-target-process)
+        -   **[Inter-Process communication (IPC)](#inter-process-communication-ipc)**
             - [How to setup named shared memory x86](#how-to-setup-named-shared-memory-x86)
             - [How to read and write from/to the shared memory x86](#how-to-read-and-write-fromto-the-shared-memory-x86)
             - [How to clear the shared memory buffer x86](#how-to-clear-the-shared-memory-x86)
             - [How to remove named shared memory x86](#how-to-remove-named-shared-memory-x86)
+        -   **[RegisterDumper x86](#registerdumper-x86)**
+            - [How to create a register dumper x86](#how-to-create-a-register-dumper-x86)
+            - [How to start a register dumper x86](#how-to-start-a-register-dumper-x86)
+            - [How to stop a register dumper x86](#how-to-stop-a-register-dumper-x86)
+            - [How to destroy a register dumper x86](#how-to-destroy-a-register-dumper-x86)
+            - [How to check if a registercontext is active or not](#how-to-check-if-a-registercontext-is-active-or-not)
+            - [How to retrieve a pointer to a registercontext with the dumped address](#how-to-retrieve-a-pointer-to-a-registercontext-with-the-dumped-address)
+            - [How to access the registers data from the registercontext](#how-to-access-the-registers-data-from-the-registercontext)
     - [**Basic overlay implementation**](#basic-overlay-implementation)
         -   [How to setup your overlay](#how-to-setup-your-overlay)
         -   [How to draw a string](#how-to-draw-a-string)
@@ -112,12 +147,12 @@ To compile a project with this framework you need to prepare some things before.
     *   You need to enter your DirectX Libraries path under **Library Directories**
     *   Also make sure to do these changes for all configurations (Debug and Release) and the correct Platform!
     *   Another thing to watch out for is the correct library path from DirectX for your current platform!
-    *   ![Project Settings](/res/project-settings.png)
-    *   ![DirectX Linking](/res/project-directx-linking.png)
+    *   ![Project Settings](res/project-settings.png)
+    *   ![DirectX Linking](res/project-directx-linking.png)
 2. **Make sure to set the correct C++ Language Standard**
     * Go to **Project** -> **Properties** -> **General**
     * Try setting the **C++ Language Standard** to **/std:c++20**, if this won't work for some reason try setting it to **/std:c++latest**
-    * ![C++ Language Standard](/res/project-settings-language.png)
+    * ![C++ Language Standard](res/project-settings-language.png)
 
 After these steps you should be able to successfully compile.
 ## **Design of the framework**
@@ -185,6 +220,8 @@ The framework contains the following modules:
                 void tick() override;
 
                 void on_render() override;
+
+                void on_shutdown() override;
             };
         ```
         **The include path to the feature file may differ from your local folder structure!**
@@ -195,6 +232,7 @@ The framework contains the following modules:
         - `on_first_activation` will be executed when the feature gets the first time activated
         - `tick` is not called by default but should be called frequently when your feature is active, for an example look here: [How to run your cheat](#how-to-run-your-cheat).
         - `on_render` is not called by default but should be called in your overlay instance when the feature is active and wants to draw something, for an example look here: [How to run your overlay](#how-to-run-your-overlay).
+        - `on_shutdown` should be called when the cheat is shutting down, like e.g. `cheat::shutdown`.
     
     - ### **How to add new features to your cheat**
         After you did finish your feature you want to add it to your `cheat` instance, right?
@@ -830,13 +868,256 @@ The framework contains the following modules:
             // to unhook the shit
             const std::uintptr_t target_function = fancy_base + 0xAFFE;
 
-            // U N H OO K
+            // U N H O O K
             if( g_pProcess->destroy_hook_x86( target_function ) )
                 printf( "[!] Successfully unhooked :^)!\n" );
             else
                 printf( "[!] MAYDAY MAYDAY error hello hi hallo holla bonjour!\n" );
         }
         ```
+    - ### **How to inject a DLL with LoadLibrary**
+        Just provide a valid path of the dll, which you want to inject into the target process, to the function `inject_dll_load_library`.
+
+        ```cpp
+        void demo_loadlib()
+        {
+            const auto proc = std::make_unique< process >();
+
+            if (!proc->setup_process(L"dummy.exe"))
+                return;
+
+            std::println("[+] pid: {}\n", proc->get_process_id());
+
+            if (!proc->inject_dll_load_library("C:\\Users\\craaaaaaaaaaaaagson\\Desktop\\test.dll"))
+                return;
+
+            std::println("[+] Succesfully injected dll into process");
+        }
+        ```
+    - ### **How to get a pointer to the DOS header of an image**
+        ```cpp
+        void demo_dos_header()
+        {
+            const auto proc = std::make_unique< process >();
+
+            if (!proc->setup_process(L"dummy.exe"))
+                return;
+
+            std::println("[+] pid: {}\n", proc->get_process_id());
+
+            const auto img_ptr = proc->get_image_ptr_by_name(L"dummy.exe");
+
+            if (!img_ptr)
+                return;
+
+            const auto dos_ptr = img_ptr->get_dos_header_ptr();
+
+            if (!dos_ptr)
+                return;
+
+            std::println("[+] magic: {:04X}", dos_ptr->e_magic);
+        }
+        ```
+    - ### **How to get a pointer to the NT headers of an image**
+    ```cpp
+    void demo_nt_headers()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto img_ptr = proc->get_image_ptr_by_name(L"dummy.exe");
+
+        if (!img_ptr)
+            return;
+
+        const auto nt_ptr = img_ptr->get_nt_headers_ptr();
+
+        if (!nt_ptr)
+            return;
+
+        std::println("[+] machine {:04X}", nt_ptr->FileHeader.Machine);
+    }
+    ```
+    - ### **How to get a pointer to the import descriptor of an image**
+    ```cpp
+    void demo_import_descriptor()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto img_ptr = proc->get_image_ptr_by_name(L"dummy.exe");
+
+        if (!img_ptr)
+            return;
+
+        const auto id = img_ptr->get_import_descriptor();
+
+        if (!id)
+            return;
+
+        std::println("[+] import descriptor ptr: 0x{:08X}", reinterpret_cast< std::uintptr_t >( id ) );
+    }
+    ```
+    - ### **How to parse/retrieve all imports of an image**
+    For this case you can use the function `get_imports` of either `image_x64` or `image_x86`.
+    It will return a `std::vector< std::tuple< std::string, std::string, std::uintptr_t > >`, which basically is a big list of all imports in the Import Address Table (IAT) of an image.
+    The first string is the name of the image, from where the function is imported.
+    The second string is the name of the function, which is imported.
+    The last element of the tuple is pointer to the imported function, which can be used for IAT hooking etc.
+    This function works for both `image_x64` and `image_x86`.
+
+    Here is an example of how you can print out all entries from the IAT in a easy way:
+    ```cpp
+    void demo_image_iat()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto img_ptr = proc->get_image_ptr_by_name(L"dummy.exe");
+
+        if (!img_ptr)
+            return;
+
+        const auto imports = img_ptr->get_imports();
+
+        if (imports.empty())
+            return;
+
+        for (const auto& [img, fn_name, fn_ptr] : imports)
+            std::println("[#] {}::{} -> 0x{:08X}", img, fn_name, fn_ptr);
+
+        std::println("\n[+] Parsed {} imports", imports.size());
+    }
+    ```
+    - ### **How to get a pointer to the Process Environment Block (PEB) of the target process**
+    ```cpp
+    void lab()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto peb_ptr = proc->get_peb_ptr();
+
+        if (!peb_ptr)
+            return;
+
+        std::println("[+] peb: 0x{:X}", peb_ptr);
+    }
+    ```
+    - ### **How to retreive the PEB from the target process**
+    ```cpp
+    void lab()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto peb = proc->get_peb();
+
+        std::println("[+] PEB::Ldr -> 0x{:X}", reinterpret_cast< std::uintptr_t >( peb.Ldr ) );
+    }
+    ```
+    - ### **How to retreive the ImageBaseAddress of the PEB from the target process**
+    ```cpp
+    void lab()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"firefox.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto peb_image_addr = proc->get_peb_image_base_address();
+
+        std::println( "[+] PEB::ImageBaseAddress -> 0x{:X}", peb_image_addr );
+    }
+    ```
+    - ### **How to retreive all modules inside InMemoryOrderModuleList of the PEB from the target process**
+    ```cpp
+    void lab()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"dummy.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto modules = proc->get_modules_from_peb();
+
+        for (const auto& [module_name, module_base, module_size] : modules)
+            std::println("{} -> 0x{:X} ({} bytes)", module_name, module_base, module_size);
+    }
+    ```
+    - ### **How to search for specific imports inside all modules from InMemoryOrderModuleList of the PEB from the target process**
+    ```cpp
+    void lab()
+    {
+        const auto proc = std::make_unique< process >();
+
+        if (!proc->setup_process(L"firefox.exe"))
+            return;
+
+        std::println("[+] pid: {}\n", proc->get_process_id());
+
+        const auto modules = proc->get_modules_from_peb();
+
+        for (const auto& [module_name, module_base, module_size] : modules)
+        {
+            std::println("{} -> 0x{:X} ({} bytes)", module_name, module_base, module_size);
+
+            const auto temp = std::make_unique< image_x64 >(module_base, module_size);
+            
+            const auto module_name_w = std::wstring(module_name.begin(), module_name.end());
+
+            if (!ReadProcessMemory(
+                proc->get_process_handle(), 
+                reinterpret_cast< LPCVOID >( module_base ), 
+                temp->get_byte_vector_ptr()->data(), 
+                module_size, nullptr
+            ))
+                continue;
+
+            const auto imports = temp->get_imports();
+
+            if (imports.empty())
+                continue;
+
+            std::ranges::for_each( imports, [&](const auto& tup)
+                {
+                    std::apply( [](const auto& image_name, const auto& fn_name, const auto& fn_ptr) 
+                        {
+                            // replace Nt here with the substring you want to filter for in the imports of the modules
+                            if (fn_name.contains("Nt"))
+                                std::println("{}::{} -> 0x{:X}", image_name, fn_name, fn_ptr);
+                        }, tup);
+                }
+                );
+
+            std::println("");
+        }
+    }
+    ```
     - ### **Inter-Process Communication (IPC)**
         - ### **How to setup named shared memory x86**
             First you need a object name for the Named Shared Memory, if you want to use a "Global\\XXX" name: **Make sure to have the proper rights on both sides (cheat and game process)**, otherwise the function will **fail**!
@@ -929,6 +1210,168 @@ The framework contains the following modules:
             else
                 printf( "failed!\n" );
             ```
+- ### **RegisterDumper x86**
+    First of all I want to explain my motivation and real use case for this feature here.
+    As this Framework is designed for external cheats some things from internal cheats aren't available easily, like e.g. function hooking and reading/writing the registers at the specific point inside the function.
+    Since today I came across multiple occasions where I didn't find a static pointer for a list but a function where all elements from the list where processed.
+    As I got no static pointer to that list, I could not simply sigscan, read and parse it like a normal external would do. 
+    And I also could not just hook the function and grab the elements by reading out the used registers like in a internal cheat.
+    Most of the time I found a workaround which allowed me to circumvent reading the used registers where the elements were stored in but there were also few times where no I couldn't find a workaround and I won't work out.
+
+    **Well, what can I imagine now under the term "RegisterDumper x86"?**
+    Obviously it's for x86 only, at the time. 
+    Also this is feature which will allow you to access all GPRs from a point in memory.
+    This works by utilizing a shared memory feature from this framework where all register content will be written to.
+    Also a 5 byte hook is placed to the given address which redirects the code flow to a little shellcode which writes the registers content into the shared memory page, which e.g. looks like this:
+    ![regdumper-dumper-sh](res/regdumper-dump-sh.png)
+
+    After writing the registers content to the shared memory page the overwritten instructions will be executed and then a jump after the placed hook follows, so make sure to not overwrite instructions which depend on a correct callstack etc..
+
+    There is an ```std::vector< std::unique_ptr< registercontext > >``` inside of the ```process``` class, which holds all created registercontext's. 
+    
+    **Now what is a registercontext?**
+    This might be a bit confusing right now because I talked only about dumper and not context's but try to think about it like the dumper is the abstract design construct I had in mind, which is integrated into the ``` process``` class by different functions for creating, starting, stopping, destroying or the vector which holds all registercontext's. 
+    A registercontext is one smaller part of the dumper, it's purpose is holding relevant data for the accessing/reading of the registers content. I can only suggest you to have a look at it's implementation inside ``` registercontext.hpp```.
+    Also a registercontext holds a pointer to the shared memory instance which belongs to it, this is so because otherwise it could not map the class for the registers onto the pointer for the shared memory page where the registers content is.
+
+    To make this more clear, here is the implementation of the ```registercontext::get_registers_data()``` function:
+    ```cpp
+    [[nodiscard]] inline auto get_registers_data() const noexcept
+	{
+		return static_cast< register_data* >( this->m_pShInstance->get_buffer_ptr() );
+	}
+    ```
+    register_data is also defined in the same header file as registercontext, so you may have a look at it.
+    Essentially it's just a class which holds unions and variables for the registers. 
+    For the moment only the GPRs like e.g. EAX, ECX, ESP, ESI are supported but I plan to add support for the FPU registers also.
+
+    Finally I want to say something about the registercontext's active status.
+    I want you to understand that just because you call e.g. ```registercontext::enable_dumper()``` will not automatically start the dumping process of the register. 
+    Please use ```process::start_register_dumper_x86``` or ```process::stop_register_dumper_x86``` functions to start or stop the dumping.
+    The difference is that when you only set the active boolean from registercontext to true there is no hook applied or otherwise no hook removed and original bytes restored, it's mainly for internal purposes that the ```process``` class knows if an registercontext should be dumped or not.
+
+    I'm sure this current state of my approach is a bit more complicated than it needed to be but just play with it yourself and get familiar with it.
+    Also I want to improve the logic and simplicity in the future.
+
+    - ### **How to create a register dumper x86**
+    The following things will happen here:
+    1. Create a shared memory instance with a custom object name for the specified adress where the register will be dumped.
+    2. Preparing the shellcode which will dump the registers content and write it to the shared memory page.
+    3. Create the hook which will redirect to the dump shellcode and jump back right after the placed hook.
+    4. Create an instance of a registercontext with the given values and enable the dumping for it.
+    5. Append the freshly created instance to the internal vector of the ```process``` class.
+    
+    ```cpp
+    // (Assume g_pProcess is a instance of process)
+	if( Globals::g_pProcess->create_register_dumper_x86( 0xDEADAFFE ) )
+		printf( "[+] Registercontext was successfully created!\n" );
+	else
+		printf( "[!] Could not create the registercontext!\n" );
+    ```
+
+    - ### **How to start a register dumper x86**
+    Here it will just hook the address again and enable the dumping, the shared memory still exists as the registercontext was not destroyed.
+
+    ```cpp
+    // (Assume g_pProcess is a instance of process)
+    if( Globals::g_pProcess->start_register_dumper_x86( 0xDEADAFFE ) )
+		printf( "[+] Dumping of the register is starting!\n" );
+	else
+		printf( "[!] Could not start the dumping of the registers!\n" );
+    ```
+    - ### **How to stop a register dumper x86**
+    Here it will destroy the placed hook, restore it's original bytes and disable the dumping for the registercontext.
+
+     ```cpp
+    // (Assume g_pProcess is a instance of process)
+    if( Globals::g_pProcess->stop_register_dumper_x86( 0xDEADAFFE ) )
+		printf( "[+] Dumping of the register is stopped!\n" );
+	else
+		printf( "[!] Could not stop the dumping of the registers!\n" );
+    ```
+
+    - ### **How to destroy a register dumper x86**
+    Here the following things will happen:
+    1. If the registercontext, which the given address belongs to, is still active stop it.
+    2. Destroy the placed hook and restore it's original bytes.
+    3. Destroy the shared memory instance.
+    4. Erase the registercontext element from the internal vector inside ```process``` class.
+    
+    ```cpp
+    // (Assume g_pProcess is a instance of process)
+	if( Globals::g_pProcess->destroy_register_dumper_x86( 0xDEADAFFE ) )
+		printf( "[+] Registercontext was successfully destroyed!\n" );
+	else
+		printf( "[!] Could not destroy the registercontext!\n" );
+    ```
+    - ### **How to check if a registercontext is active or not**
+     ```cpp
+    // (Assume g_pProcess is a instance of process)
+    if( Globals::g_pProcess->is_active_register_dumper_x86( 0xDEADAFFE ) )
+		printf( "[+] Dumping of the registers is active!\n" );
+	else
+		printf( "[!] Dumping of the registers is not active!\n" );
+    ```
+
+    - ### **How to retrieve a pointer to a registercontext with the dumped address**
+    Make sure to **always** validate the pointer you retrieve!
+
+    ```cpp
+    // (Assume g_pProcess is a instance of process)
+    const auto ptr = Globals::g_pProcess->get_register_dumper_x86_ptr( 0xDEADAFFE );
+
+    if( ptr != nullptr )
+		printf( "[+] Registercontext pointer is valid!\n" );
+	else
+		printf( "[!] Registercontext is not valid!\n" );
+    ```
+
+    - ### **How to access the registers data from the registercontext**
+     Make sure to **always** validate the pointer you retrieve!
+    ```cpp
+    // (Assume g_pProcess is a instance of process)
+
+    const auto reg_data = Globals::g_pProcess->get_data_from_registers_x86( 0xDEADAFFE );
+
+	const auto is_active = Globals::g_pProcess->is_active_register_dumper_x86( 0xDEADAFFE );
+
+	if( reg_data != nullptr && is_active )
+	{
+		printf("[+] Dumped Registers from: 0x%08X\n", 0xDEADAFFE);
+
+		printf("EAX -> 0x%08X\n", reg_data->EAX.eax);
+		printf("\tAX -> 0x%04X\n", reg_data->EAX.ax);
+		printf("\tAH, AL -> 0x%02X, 0x%02X\n", reg_data->EAX.a[0], reg_data->EAX.a[1]);
+
+		printf("EBX -> 0x%08X\n", reg_data->EBX.ebx);
+		printf("\tBX -> 0x%04X\n", reg_data->EBX.bx);
+		printf("\tBH, BL -> 0x%02X, 0x%02X\n", reg_data->EBX.b[0], reg_data->EBX.b[1]);
+
+		printf("ECX -> 0x%08X\n", reg_data->ECX.ecx);
+		printf("\tCX -> 0x%04X\n", reg_data->ECX.cx);
+		printf("\tCH, CL -> 0x%02X, 0x%02X\n", reg_data->ECX.c[0], reg_data->ECX.c[1]);
+
+		printf("EDX -> 0x%08X\n", reg_data->EDX.edx);
+		printf("\tDX -> 0x%04X\n", reg_data->EDX.dx);
+		printf("\tDH, DL -> 0x%02X, 0x%02X\n", reg_data->EDX.d[0], reg_data->EDX.d[1]);
+
+		printf("ESP -> 0x%08X\n", reg_data->ESP.esp);
+		printf("\tSP -> 0x%04X\n", reg_data->ESP.sp);
+
+		printf("EBP -> 0x%08X\n", reg_data->EBP.ebp);
+		printf("\tBP -> 0x%04X\n", reg_data->EBP.bp);
+
+		printf("ESI -> 0x%08X\n", reg_data->ESI.esi);
+		printf("\tSI -> 0x%04X\n", reg_data->ESI.si);
+
+		printf("EDI -> 0x%08X\n", reg_data->EDI.edi);
+		printf("\tDI -> 0x%04X\n", reg_data->EDI.di);
+    }
+    ```
+    Which would result in something like this:
+
+    ![regdumper-regdata](res/regdumper-regdata.png)
+
 - ### **Basic overlay implementation**
     - ### **How to setup your overlay**
         You can either initialize your overlay by using the window title of the target process or a window handle.
@@ -1003,6 +1446,16 @@ The framework contains the following modules:
             // yes yes yes I know it's local but just take it as a global overlay instance pointer 
             init_ofalai();
 
+             dx9_overlay->draw_line( 
+                400,                    // start x coordinate
+                200,                    // start y coordinate
+                450,                    // end x coordinate
+                250,                    // end y coordinate
+                0,                      // red color (0-255)
+                0,                      // green color (0-255)
+                255,                    // blue color (0-255)
+            );
+
             dx9_overlay->draw_line( 
                 400,                    // start x coordinate
                 200,                    // start y coordinate
@@ -1010,7 +1463,8 @@ The framework contains the following modules:
                 250,                    // end y coordinate
                 0,                      // red color (0-255)
                 0,                      // green color (0-255)
-                255                     // blue color (0-255)
+                255,                    // blue color (0-255)
+                2                       // width of the line (optional), default is 1
             );
         }
         ```
@@ -1033,6 +1487,17 @@ The framework contains the following modules:
                 0,                      // red color (0-255)
                 0,                      // green color (0-255)
                 255                     // blue color (0-255)
+            );
+
+            dx9_overlay->draw_rect( 
+                400,                    // start x coordinate
+                200,                    // start y coordinate
+                50,                     // width of the rect
+                100,                    // height of the rect
+                0,                      // red color (0-255)
+                0,                      // green color (0-255)
+                255,                    // blue color (0-255)
+                2                       // width of the rect (optional), default is 1
             );
         }
         ```

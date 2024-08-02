@@ -241,15 +241,15 @@ public:
 				const auto current_byte = ( is_absolute_addr ) ? this->m_bytes.at( start_addr + idx + j - this->m_base ) : this->m_bytes.at( start_addr + idx + j );
 				
 				// prepare left side, which is the hex bytes
-				if ( j != 15 )
-					left_side += std::format( "{:02X} ", std::to_integer< uint8_t >( current_byte ) );
+				if (j != 15)
+					left_side += std::format("{:02X} ", static_cast<uint8_t>(current_byte));
 				else
-					left_side += std::format( "{:02X}", std::to_integer< uint8_t >( current_byte ) );
-				
+					left_side += std::format("{:02X}", static_cast<uint8_t>(current_byte));
+
 				// prepare right side, which should be ascii chars etc
-				const auto rs_value = std::to_integer< uint8_t >( current_byte );
-				
-				right_side += std::format( "{} ", rs_value >= 33 && rs_value < 127 ? static_cast< char >( rs_value ) : static_cast< char >( 46 ) );
+				const auto rs_value = static_cast< uint8_t >(current_byte);
+
+				right_side += std::format("{} ", (rs_value >= 33 && rs_value < 127) ? static_cast<char>(rs_value) : static_cast<char>(46));
 			}
 
 			// print now the current line and a newline
@@ -259,6 +259,124 @@ public:
 			left_side = "";
 			right_side = "";
 		}
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Gets dos header pointer of the current image. </summary>
+	///
+	/// <remarks>	cragson, 09/07/2024. </remarks>
+	///
+	/// <returns>	The dos header pointer. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] inline PIMAGE_DOS_HEADER get_dos_header_ptr() noexcept
+	{
+		if (this->m_bytes.size() < sizeof(IMAGE_DOS_HEADER))
+			return nullptr;
+
+		const auto dos_header = reinterpret_cast<PIMAGE_DOS_HEADER>(this->m_bytes.data());
+
+		if (dos_header->e_magic != IMAGE_DOS_SIGNATURE)
+			return nullptr;
+
+		return dos_header;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Gets NT headers pointer of the current image. </summary>
+	///
+	/// <remarks>	cragson, 09/07/2024. </remarks>
+	///
+	/// <returns>	The NT headers pointer. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] inline PIMAGE_NT_HEADERS get_nt_headers_ptr() noexcept
+	{
+		const auto dos_header = this->get_dos_header_ptr();
+
+		if (!dos_header)
+			return nullptr;
+
+		if (this->m_bytes.size() < sizeof(IMAGE_DOS_HEADER) + sizeof(IMAGE_NT_HEADERS))
+			return nullptr;
+
+		const auto nt_headers = reinterpret_cast<PIMAGE_NT_HEADERS>(this->m_bytes.data() + dos_header->e_lfanew);
+
+		if (nt_headers->Signature != IMAGE_NT_SIGNATURE)
+			return nullptr;
+
+		return nt_headers;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Gets import descriptor of the current image. </summary>
+	///
+	/// <remarks>	cragson, 09/07/2024. </remarks>
+	///
+	/// <returns>	The import descriptor pointer. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] inline PIMAGE_IMPORT_DESCRIPTOR get_import_descriptor() noexcept
+	{
+		const auto nt_headers = this->get_nt_headers_ptr();
+
+		if (!nt_headers)
+			return nullptr;
+
+		return reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(this->m_bytes.data() + nt_headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>	Parses the Import Address Table (IAT) of the current image and retrieves the imports. </summary>
+	///
+	/// <remarks>	cragson, 09/07/2024. </remarks>
+	///
+	/// <returns>	Returns an std::vector with the image name, function name and function ptr of all entries in the IAT. </returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] inline auto get_imports() noexcept
+	{
+		std::vector< std::tuple< std::string, std::string, std::uintptr_t > > ret = {};
+
+		auto id = this->get_import_descriptor();
+
+		if (!id)
+			return ret;
+
+		while (id->Name)
+		{
+			const auto module_name = std::string(reinterpret_cast<char*>(this->m_bytes.data() + id->Name));
+
+			if (module_name.empty())
+			{
+				++id;
+
+				continue;
+			}
+
+			auto thunk = reinterpret_cast<PIMAGE_THUNK_DATA>(this->m_bytes.data() + id->FirstThunk);
+
+			auto orig_thunk = reinterpret_cast<PIMAGE_THUNK_DATA>(this->m_bytes.data() + id->OriginalFirstThunk);
+
+			while (thunk->u1.AddressOfData)
+			{
+				const auto import_name = thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG
+					? std::to_string(IMAGE_ORDINAL(orig_thunk->u1.Ordinal))
+					: std::string(reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(this->m_bytes.data() + orig_thunk->u1.AddressOfData)->Name);
+
+				ret.emplace_back(
+					module_name,
+					import_name,
+					thunk->u1.Function
+				);
+
+				++thunk;
+				++orig_thunk;
+			}
+			++id;
+		}
+
+		return ret;
 	}
 
 

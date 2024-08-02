@@ -1,5 +1,6 @@
 #include "process.hpp"
 #include <TlHelp32.h>
+#include <algorithm>
 
 struct window_cb_args
 {
@@ -29,8 +30,8 @@ bool process::refresh_image_map()
 {
 	MODULEENTRY32 me32 = { sizeof( MODULEENTRY32 ) };
 
-	const auto snapshot_handle = CreateToolhelp32Snapshot( TH32CS_SNAPALL, this->m_pid );
-	if( !snapshot_handle )
+	const auto snapshot_handle = CreateToolhelp32Snapshot( TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, this->m_pid );
+	if( !snapshot_handle || snapshot_handle == INVALID_HANDLE_VALUE )
 		return false;
 
 	// after successfully retrieving my snapshot handle, I clear the map - to get rid of the old images + information
@@ -129,6 +130,9 @@ bool process::setup_process( const std::wstring& process_identifier, const bool 
 		proc_handle = OpenProcess( PROCESS_ALL_ACCESS, FALSE, buffer );
 		if( !proc_handle )
 			return false;
+
+		// prevent leaking the handle
+		CloseHandle( snapshot_handle );
 
 		// The last needed thing is the window handle
 		window_cb_args args = { buffer, HWND() };
@@ -308,7 +312,7 @@ bool process::read_image( byte_vector* dest_vec, const std::wstring& image_name 
 bool process::create_hook_x86( const std::uintptr_t start_address, const size_t size,
                                const std::vector< uint8_t >& shellcode )
 {
-	if( start_address < 0 || size < 0 || shellcode.empty() )
+	if( start_address < 0 || size < 5 || shellcode.empty() )
 		return false;
 
 	// allocate a read-write-execute memory page in the target process
@@ -784,4 +788,435 @@ bool process::destroy_shared_memory_instance_x86( const std::string& object_name
 		}
 	}
 	return false;
+}
+
+bool process::create_register_dumper_x86( const std::uintptr_t dumped_address, const size_t hook_size )
+{
+	// if the address where the dumper will be placed is invalid
+	if( dumped_address <= 0 )
+		return false;
+
+	// if a register context already exists with the given address
+	if(
+		std::ranges::any_of(
+			this->m_register_dumper.begin(),
+			this->m_register_dumper.end(),
+			[&dumped_address]( const std::unique_ptr< registercontext >& re )
+			{
+				return re->get_dumped_address() == dumped_address;
+			}
+		)
+	)
+		return false;
+
+	// create the custom object name for the register context
+	const auto obj_name = std::vformat( "osmium-dumpctx-{:X}", std::make_format_args( dumped_address ) );
+
+	// maybe a bit too paranoid but better safe than sorry
+	if( obj_name.empty() )
+		return false;
+
+	// create the shared memory for the regdumper, with enough bytes to fit into the registers_data class
+	if( !this->create_shared_memory_instance_x86( obj_name, NULL, sizeof( register_data ) ) )
+		return false;
+
+	// now after the shared memory instance was successfully created
+	// let's place the hook which will dump all registers data into the shared memory
+
+	std::vector< uint8_t > install_sh =
+	{
+		0xA3, 0xEF, 0xBE, 0xAD, 0xDE,			// 0000  mov [DEADBEEF],    eax
+		0x89, 0x1D, 0xF3, 0xBE, 0xAD, 0xDE,		// 0005  mov [DEADBEEF+4],  ebx
+		0x89, 0x0D, 0xF7, 0xBE, 0xAD, 0xDE,		// 000B  mov [DEADBEEF+8],  ecx
+		0x89, 0x15, 0xFB, 0xBE, 0xAD, 0xDE,		// 0011  mov [DEADBEEF+C],  edx
+		0x89, 0x25, 0xFF, 0xBE, 0xAD, 0xDE,		// 0017  mov [DEADBEEF+10], esp
+		0x89, 0x2D, 0x03, 0xBF, 0xAD, 0xDE,		// 001D  mov [DEADBEEF+14], ebp
+		0x89, 0x35, 0x07, 0xBF, 0xAD, 0xDE,		// 0023  mov [DEADBEEF+18], esi
+		0x89, 0x3D, 0x0B, 0xBF, 0xAD, 0xDE		// 0029  mov [DEADBEEF+1C], edi
+	};
+
+	// get now the - hopefully - freshly created shared memory instance
+	const auto sh_inst = this->get_shared_memory_instance_by_object_name( obj_name );
+
+	// must be valid because nothing works without it
+	if( sh_inst == nullptr )
+		return false;
+
+	// get now the address of the shared memory inside the target process
+	const auto target_sh_ptr = reinterpret_cast< std::uintptr_t >( sh_inst->get_process_buffer_ptr() );
+
+	// make sure the target process buffer pointer is valid
+	if( !target_sh_ptr )
+		return false;
+
+	// prepare now the addresses where the registers will be written to
+
+	// GPRs
+	for( auto i = 0; i < 8; i++ )
+	{
+		if( i == 0 )
+			*reinterpret_cast< std::uintptr_t* >( &install_sh[ 1 ] ) = target_sh_ptr;
+		else
+			*reinterpret_cast< std::uintptr_t* >( &install_sh[ 7 + 6 * ( i - 1 ) ] ) = target_sh_ptr + i * sizeof(
+				uint32_t );
+	}
+
+	// Read now the original bytes from memory
+	std::vector< uint8_t > original_bytes;
+	original_bytes.resize( hook_size );
+
+	if( !ReadProcessMemory(
+		this->m_handle,
+		reinterpret_cast< LPCVOID >( dumped_address ),
+		original_bytes.data(),
+		hook_size,
+		nullptr
+	) )
+		return false;
+
+	// append them now to the shellcode
+	install_sh.insert( install_sh.end(), original_bytes.begin(), original_bytes.end() );
+
+	// now place the hook at the address which should be dumped
+	if( !this->create_hook_x86( dumped_address, hook_size, install_sh ) )
+		return false;
+
+	// At this point the following should be done
+	// 1. Created a shared memory instance for the new register context
+	// 2. Prepared the dumping shellcode with the proper pointer from the new shared memory instance
+	// 3. Created and placed the hook at the given address, where the registers should be dumped
+
+	// Create now the smart ptr with the proper instance
+	auto ctx = std::make_unique< registercontext >( sh_inst, dumped_address, hook_size );
+
+	// Enable the register_context, so the dumping will already happen
+	ctx->enable_dumper();
+
+	// Append now the fresh register context to the internal vector
+	this->m_register_dumper.push_back( std::move( ctx ) );
+
+	return true;
+}
+
+bool process::destroy_register_dumper_x86( const std::uintptr_t dumped_address )
+{
+	// If the address where the dumper will be placed is invalid
+	if( dumped_address <= 0 )
+		return false;
+
+	// Try to find the registercontext for the given address
+	const auto& existing_ctx = std::ranges::find_if(
+		this->m_register_dumper.begin(),
+		this->m_register_dumper.end(),
+		[&dumped_address]( const std::unique_ptr< registercontext >& re )
+		{
+			return re->get_dumped_address() == dumped_address;
+		}
+	);
+
+	// If no registercontext was found, return false
+	if( existing_ctx == this->m_register_dumper.end() )
+		return false;
+
+	// If the registercontext is still active, stop it before destroying it
+	// If it couldn't be stopped, return false
+	if( existing_ctx->get()->is_dumper_active() )
+		if( !this->stop_register_dumper_x86( dumped_address ) )
+			return false;
+
+	// Unhook the placed hook now
+	if( !this->destroy_hook_x86( dumped_address ) )
+		return false;
+
+	// Craft now the object name from the existing shared memory instance
+	const auto obj_name = std::vformat( "osmium-dumpctx-{:X}", std::make_format_args( dumped_address ) );
+
+	// Maybe a bit too paranoid but better safe than sorry
+	if( obj_name.empty() )
+		return false;
+
+	// Destroy now the existing shared memory instance
+	if( !this->destroy_shared_memory_instance_x86( obj_name ) )
+		return false;
+
+	// Erase now the registercontext from the internal vector
+	this->m_register_dumper.erase(
+		std::ranges::find( this->m_register_dumper.begin(), this->m_register_dumper.end(), *existing_ctx )
+	);
+
+	// Now everything should be properly cleaned and fine again :-)
+
+	return true;
+}
+
+bool process::start_register_dumper_x86( const std::uintptr_t dumped_address )
+{
+	// If no register context exists with the given dumped address, return false
+	if( const auto not_exists = std::ranges::none_of(
+		this->m_register_dumper,
+		[&dumped_address]( const std::unique_ptr< registercontext >& re )
+		{
+			return re->get_dumped_address() == dumped_address;
+		}
+	) )
+		return false;
+
+	// Try finding a registercontext for the given address
+	const auto& existing_ctx = std::ranges::find_if(
+		this->m_register_dumper,
+		[&dumped_address]( const std::unique_ptr< registercontext >& re )
+		{
+			return re->get_dumped_address() == dumped_address;
+		}
+	);
+
+	// Check if the given address belongs to a existing registercontext
+	// If the context doesn't exist, return false
+	if( existing_ctx == this->m_register_dumper.end() )
+		return false;
+
+	// If a registercontext exists with the given address and is already active, return false
+	// A already active context can not be started again
+	if( existing_ctx->get()->is_dumper_active() )
+		return false;
+
+	// Craft now the object name from the existing shared memory instance
+	const auto obj_name = std::vformat( "osmium-dumpctx-{:X}", std::make_format_args( dumped_address ) );
+
+	// Now prepare the shellcode for the hook
+	std::vector< uint8_t > start_sh =
+	{
+		0xA3, 0xEF, 0xBE, 0xAD, 0xDE,			// 0000  mov [DEADBEEF],    eax
+		0x89, 0x1D, 0xF3, 0xBE, 0xAD, 0xDE,		// 0005  mov [DEADBEEF+4],  ebx
+		0x89, 0x0D, 0xF7, 0xBE, 0xAD, 0xDE,		// 000B  mov [DEADBEEF+8],  ecx
+		0x89, 0x15, 0xFB, 0xBE, 0xAD, 0xDE,		// 0011  mov [DEADBEEF+C],  edx
+		0x89, 0x25, 0xFF, 0xBE, 0xAD, 0xDE,		// 0017  mov [DEADBEEF+10], esp
+		0x89, 0x2D, 0x03, 0xBF, 0xAD, 0xDE,		// 001D  mov [DEADBEEF+14], ebp
+		0x89, 0x35, 0x07, 0xBF, 0xAD, 0xDE,		// 0023  mov [DEADBEEF+18], esi
+		0x89, 0x3D, 0x0B, 0xBF, 0xAD, 0xDE		// 0029  mov [DEADBEEF+1C], edi
+	};
+
+	// Get now the - hopefully - freshly created shared memory instance
+	const auto sh_inst = this->get_shared_memory_instance_by_object_name( obj_name );
+
+	// Must be valid because nothing works without it
+	if( sh_inst == nullptr )
+		return false;
+
+	// Get now the address of the shared memory inside the target process
+	const auto target_sh_ptr = reinterpret_cast< std::uintptr_t >( sh_inst->get_process_buffer_ptr() );
+
+	// Make sure the target process buffer pointer is valid
+	if( !target_sh_ptr )
+		return false;
+
+	// Prepare now the addresses where the registers will be written to
+
+	// GPRs
+	for( auto i = 0; i < 8; i++ )
+	{
+		if( i == 0 )
+			*reinterpret_cast< std::uintptr_t* >( &start_sh[ 1 ] ) = target_sh_ptr;
+		else
+			*reinterpret_cast< std::uintptr_t* >( &start_sh[ 7 + 6 * ( i - 1 ) ] ) = target_sh_ptr + i * sizeof(
+				uint32_t );
+	}
+
+	// Read now the original bytes from memory
+	std::vector< uint8_t > original_bytes;
+	original_bytes.resize( existing_ctx->get()->get_hook_size() );
+
+	if( !ReadProcessMemory(
+		this->m_handle,
+		reinterpret_cast< LPCVOID >( dumped_address ),
+		original_bytes.data(),
+		existing_ctx->get()->get_hook_size(),
+		nullptr
+	) )
+		return false;
+
+	// append them now to the shellcode
+	start_sh.insert( start_sh.end(), original_bytes.begin(), original_bytes.end() );
+
+	// Now place the hook at the address which should be dumped
+	if( !this->create_hook_x86( dumped_address, existing_ctx->get()->get_hook_size(), start_sh ) )
+		return false;
+
+	// Finally set the register context active
+	existing_ctx->get()->enable_dumper();
+
+	return true;
+}
+
+bool process::stop_register_dumper_x86( const std::uintptr_t dumped_address )
+{
+	// Try to find a registercontext instance for the given address
+	const auto& existing_ctx = std::ranges::find_if(
+		this->m_register_dumper.begin(),
+		this->m_register_dumper.end(),
+		[&dumped_address]( const std::unique_ptr< registercontext >& re )
+		{
+			return re->get_dumped_address() == dumped_address;
+		}
+	);
+
+	// If no registercontext with given address exists, return false
+	if( existing_ctx == this->m_register_dumper.end() )
+		return false;
+
+	// If a registercontext exists with the given address and is not active, return false
+	if( !existing_ctx->get()->is_dumper_active() )
+		return false;
+
+	// Destroy now the placed hook
+	if( !this->destroy_hook_x86( dumped_address ) )
+		return false;
+
+	// disable now the dumper
+	existing_ctx->get()->disable_dumper();
+
+	return true;
+}
+
+bool process::inject_dll_load_library(const std::string& dll_path)
+{
+	// Allocate memory which will hold the dll path
+	const auto mem_dll = this->allocate_page_in_process(PAGE_READWRITE, dll_path.size() + 1);
+
+	if (!mem_dll)
+		return false;
+
+	// Write the DLL path to the allocated memory
+	if (!WriteProcessMemory(this->get_process_handle(), mem_dll, dll_path.c_str(), dll_path.size() + 1, NULL))
+		return false;
+
+	// Get a handle to the library where the needed function pointer is located at
+	const auto module_handle = GetModuleHandleA("kernel32.dll");
+
+	if (!module_handle)
+		return false;
+
+	// Get the address of LoadLibraryA in kernel32.dll
+	const auto loadlib_a = (LPVOID)GetProcAddress(module_handle, "LoadLibraryA");
+	if (!loadlib_a)
+		return false;
+
+	// Create a remote thread that calls LoadLibraryA with our DLL path as its argument
+	const auto remote_thread = CreateRemoteThread(this->get_process_handle(), NULL, NULL, (LPTHREAD_START_ROUTINE)loadlib_a, mem_dll, NULL, NULL);
+	if (!remote_thread)
+		return false;
+
+	// Wait for the remote thread to complete
+	WaitForSingleObject(remote_thread, INFINITE);
+
+	// Clean up
+	VirtualFreeEx(this->get_process_handle(), mem_dll, NULL, MEM_RELEASE);
+
+	return true;
+}
+
+std::uintptr_t process::get_peb_ptr()
+{
+	typedef NTSTATUS(NTAPI* pfnNtQueryInformationProcess)(
+		IN  HANDLE ProcessHandle,
+		IN  PROCESSINFOCLASS ProcessInformationClass,
+		OUT PVOID ProcessInformation,
+		IN  ULONG ProcessInformationLength,
+		OUT PULONG ReturnLength    OPTIONAL
+		);
+
+	const auto ntdll = LoadLibraryA("ntdll.dll");
+	if (ntdll == NULL)
+		return {};
+
+	const auto fn_NtQueryInformationProcess = (pfnNtQueryInformationProcess)GetProcAddress(ntdll, "NtQueryInformationProcess");
+
+	PROCESS_BASIC_INFORMATION pbi = {};
+
+	const auto ret = fn_NtQueryInformationProcess( this->m_handle, ProcessBasicInformation, &pbi, sizeof(pbi), nullptr);
+
+	if (!NT_SUCCESS(ret) || !pbi.PebBaseAddress)
+		return {};
+
+	return reinterpret_cast<std::uintptr_t>(pbi.PebBaseAddress);
+}
+
+PEB process::get_peb()
+{
+	const auto peb_ptr = this->get_peb_ptr();
+
+	if (!peb_ptr)
+		return {};
+
+	return this->read< PEB >( peb_ptr );
+}
+
+std::uintptr_t process::get_peb_image_base_address() noexcept
+{
+	const auto peb = this->get_peb();
+
+	return peb.Reserved3[1] != nullptr ? reinterpret_cast<std::uintptr_t>(peb.Reserved3[1]) : std::uintptr_t();
+
+	return std::uintptr_t();
+}
+
+std::vector<std::tuple<std::string, std::uintptr_t, size_t>> process::get_modules_from_peb()
+{
+	std::vector<std::tuple<std::string, std::uintptr_t, size_t>> ret = {};
+
+	const auto peb = this->get_peb();
+
+	PEB_LDR_DATA ldr = {};
+
+	if (!ReadProcessMemory(this->m_handle, peb.Ldr, &ldr, sizeof(ldr), nullptr))
+		return ret;
+
+	const auto ldr_head = ldr.InMemoryOrderModuleList.Flink;
+	auto ldr_current = ldr_head;
+
+	do
+	{
+		const auto ldr_data_current = this->read< LDR_DATA_TABLE_ENTRY >(
+			reinterpret_cast<std::uintptr_t>(ldr_current) - sizeof(LIST_ENTRY)
+		);
+
+		const auto path_size = ldr_data_current.FullDllName.Length / sizeof(wchar_t);
+
+		std::vector< wchar_t > full_dll_name = {};
+		full_dll_name.resize(path_size);
+
+		if (!ReadProcessMemory(
+			this->m_handle, 
+			ldr_data_current.FullDllName.Buffer, 
+			full_dll_name.data(), 
+			ldr_data_current.FullDllName.Length, 
+			nullptr)
+			)
+			break;
+
+		full_dll_name.emplace_back(L'\0');
+
+		const auto image_name_w = std::wstring(full_dll_name.data());
+
+		const auto image_name_a = std::string(image_name_w.begin(), image_name_w.end());
+
+		const auto image_base = reinterpret_cast<std::uintptr_t>(ldr_data_current.DllBase);
+		const auto image_size = reinterpret_cast<size_t>(ldr_data_current.Reserved3[1]);
+
+		if (image_base && image_size)
+		{
+			ret.emplace_back(
+				image_name_a,
+				image_base,
+				image_size
+			);
+		}
+
+		const auto ldr_temp = this->read< LIST_ENTRY >(reinterpret_cast<std::uintptr_t>(ldr_current));
+
+		ldr_current = ldr_temp.Flink;
+		
+	} while (ldr_current != ldr_head);
+
+	return ret;
 }
