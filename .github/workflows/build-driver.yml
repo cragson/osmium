@@ -2,7 +2,7 @@ name: Build Kernel Driver
 
 on:
   push:
-    branches: [ main, 'test/**' ]
+    branches: [ main, 'feature/kernel-driver' ]
     paths:
       - 'Driver/**'
       - '.github/workflows/build-driver.yml'
@@ -41,3 +41,30 @@ jobs:
           path: |
             Driver/build/${{ matrix.platform }}/${{ matrix.configuration }}/*.sys
           if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/kernel-driver'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: OsmiumDriver-x64-Release
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: driver-dev-${{ github.sha }}
+          name: "Kernel Driver Dev Build (${{ github.sha }})"
+          body: |
+            Automated development build from `feature/kernel-driver`.
+
+            **Commit:** ${{ github.sha }}
+            **Ref:** `${{ github.ref_name }}`
+          prerelease: true
+          files: artifacts/*.sys
