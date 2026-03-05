@@ -1,0 +1,43 @@
+name: Build Kernel Driver
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'Driver/**'
+      - '.github/workflows/build-driver.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'Driver/**'
+      - '.github/workflows/build-driver.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [ Debug, Release ]
+        platform: [ x64 ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build driver
+        working-directory: Driver/Kernel
+        run: msbuild driver.vcxproj /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }} /m
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: matrix.configuration == 'Release'
+        with:
+          name: OsmiumDriver-${{ matrix.platform }}-${{ matrix.configuration }}
+          path: |
+            Driver/build/${{ matrix.platform }}/${{ matrix.configuration }}/*.sys
+          if-no-files-found: error

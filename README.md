@@ -71,6 +71,16 @@
             - [How to check if a registercontext is active or not](#how-to-check-if-a-registercontext-is-active-or-not)
             - [How to retrieve a pointer to a registercontext with the dumped address](#how-to-retrieve-a-pointer-to-a-registercontext-with-the-dumped-address)
             - [How to access the registers data from the registercontext](#how-to-access-the-registers-data-from-the-registercontext)
+    - [**Kernel driver interface implementation**](#kernel-driver-interface-implementation)
+        -   [How to setup and load the kernel driver](#how-to-setup-and-load-the-kernel-driver)
+        -   [How to initialize the driver interface](#how-to-initialize-the-driver-interface)
+        -   [How to attach to a target process](#how-to-attach-to-a-target-process)
+        -   [How to read memory via the driver](#how-to-read-memory-via-the-driver)
+        -   [How to write memory via the driver](#how-to-write-memory-via-the-driver)
+        -   [How to get the process base address via the driver](#how-to-get-the-process-base-address-via-the-driver)
+        -   [How to get a module base address via the driver](#how-to-get-a-module-base-address-via-the-driver)
+        -   [How to read and write raw buffers via the driver](#how-to-read-and-write-raw-buffers-via-the-driver)
+        -   [A full driver interface example](#a-full-driver-interface-example)
     - [**Basic overlay implementation**](#basic-overlay-implementation)
         -   [How to setup your overlay](#how-to-setup-your-overlay)
         -   [How to draw a string](#how-to-draw-a-string)
@@ -189,6 +199,13 @@ The framework contains the following modules:
         - `image_x64` is a wrapper for Windows x64 PE's
         - `hook` is a class which is used for basic mid function hooking with custom shellcode on a allocated memory page inside the target process.
     * I can only suggest you to read into the code on yourself. I tried my best to cover a lot of the functionalities in understandable and easy examples. You find them here [Basic process implementation](#basic-process-implementation).
+- Driver
+    * This module provides an alternative memory access backend using a kernel-mode driver instead of the standard WinAPI functions (`ReadProcessMemory`/`WriteProcessMemory`).
+    * The kernel driver (`Driver/Kernel/`) handles memory reads via `KeStackAttachProcess` + `RtlCopyMemory` and writes with an MDL-based fallback for read-only pages.
+    * Shared IOCTL definitions (`Driver/Shared/ioctl.h`) are used by both the kernel driver and the user-mode wrapper.
+    * The user-mode wrapper (`Memory/DriverInterface/driver_interface.hpp`) provides the same `read<T>`/`write<T>` template API as the `process` class, making it easy to switch between backends.
+    * Supports both x86 and x64 target processes, including WoW64 module enumeration.
+    * See [Kernel driver interface implementation](#kernel-driver-interface-implementation) for examples.
 - Overlay
     * Before I say anything about that, I need to give proper credits to **Icew0lf83**! I came in contact with him and we shared our ideas and thoughts on a project, so I asked him if I am allowed to rewrite his DirectX9 Overlay and Renderer for my own purposes and he gave me the permissions to do it.
     * I did learn a lot while rewriting his code but I can't say this is the way to do a proper DirectX9 Overlay and/or Renderer. I still know too little of DirectX but I only wanted to serve my use cases for drawing. Maybe I will rewrite this whole module in the future, if I have time to dig a lot deeper into DirectX.
@@ -1371,6 +1388,367 @@ The framework contains the following modules:
     Which would result in something like this:
 
     ![regdumper-regdata](res/regdumper-regdata.png)
+
+- ### **Kernel driver interface implementation**
+    The `driver_interface` class provides an alternative memory access backend that communicates with a kernel driver via IOCTL instead of using `ReadProcessMemory`/`WriteProcessMemory`. This can be useful when you need to bypass user-mode API hooks or when the target process restricts handle access.
+
+    The driver operates from kernel mode using `KeStackAttachProcess` + `RtlCopyMemory` for reads, and an MDL-based fallback for writes to read-only pages. All communication uses `METHOD_BUFFERED` IOCTLs so the I/O manager handles buffer copies safely.
+
+    The `driver_interface` class has a similar API to the `process` class for read/write operations, so switching between them should be straightforward.
+
+    - ### **How to setup and load the kernel driver**
+        Before using the `driver_interface` you need to build and load the kernel driver.
+
+        **Prerequisites:**
+        - **Visual Studio 2022** (or 2019) with the **Desktop development with C++** workload
+        - **Windows Driver Kit (WDK)** matching your Visual Studio version — download from [Microsoft's WDK page](https://learn.microsoft.com/en-us/windows-hardware/drivers/download-the-wdk)
+        - **Windows SDK** (usually installed alongside Visual Studio)
+        - Make sure the WDK Visual Studio extension is installed (the WDK installer does this automatically)
+
+        **Option 1 — Building with Visual Studio (recommended):**
+        1. Open Visual Studio and create a new project
+        2. Select the **Kernel Mode Driver, Empty (KMDF)** template
+            - If you don't see it, make sure the WDK extension is installed and restart Visual Studio
+        3. Remove the auto-generated source files from the project if there are any
+        4. Add the driver source files to your project:
+            - `Driver/Kernel/main.c`
+            - `Driver/Kernel/memory.c`
+            - `Driver/Kernel/memory.h`
+            - `Driver/Kernel/process.c`
+            - `Driver/Kernel/process.h`
+            - `Driver/Kernel/ntstructs.h`
+            - `Driver/Shared/ioctl.h`
+        5. Open **Project** → **Properties** and configure the following:
+            - **Configuration Properties** → **Driver Settings** → **Target OS Version**: set to your target Windows version (e.g. Windows 10)
+            - **Configuration Properties** → **Driver Settings** → **Target Platform**: `Desktop`
+            - **C/C++** → **General** → **Additional Include Directories**: add the path to `Driver/Shared` so that `ioctl.h` can be found (or use relative includes as they are in the source)
+            - **C/C++** → **Treat Warnings As Errors**: you can set this to **No** if you run into WDK header warnings
+            - **Linker** → **Input** → **Additional Dependencies**: make sure `ntoskrnl.lib` and `hal.lib` are listed (the KMDF template includes these by default)
+        6. Set the build configuration to **Release** and the platform to **x64** (or x86 if targeting 32-bit)
+        7. Build the solution (**Ctrl+Shift+B**) — the output `.sys` file will be in your build output directory
+
+        **Option 2 — Building from the command line:**
+
+        If you prefer to build without a full VS project, you can use the WDK command-line tools.
+
+        First, create a `Makefile.toml` or use a minimal `sources` file. The simplest approach is to use MSBuild with a `.vcxproj` generated by Visual Studio, but you can also write a minimal one manually.
+
+        Using the **Enterprise WDK (EWDK)** command-line environment:
+        1. Download the EWDK ISO from Microsoft and mount it
+        2. Run `LaunchBuildEnv.cmd` from the mounted ISO to get a build environment with all WDK tools on PATH
+        3. Navigate to your driver project directory and run:
+        ```
+        msbuild driver.vcxproj /p:Configuration=Release /p:Platform=x64
+        ```
+
+        Alternatively, with a standard WDK install, open the **Developer Command Prompt for VS** and run the same `msbuild` command.
+
+        **Option 3 — Minimal Makefile approach:**
+
+        If you want to compile without a `.vcxproj` at all, you can invoke `cl.exe` and `link.exe` directly from a WDK build environment. Create a `build.bat`:
+        ```bat
+        @echo off
+        REM Run this from a WDK/EWDK build environment command prompt
+
+        set OUT_DIR=build
+        set DRIVER_NAME=driver
+
+        if not exist %OUT_DIR% mkdir %OUT_DIR%
+
+        cl.exe /nologo /kernel /GS- /W4 /Zi /Od ^
+            /D _AMD64_ /D _WIN64 /D NTDDI_VERSION=0x0A000000 /D _KERNEL_MODE ^
+            /I "%WindowsSdkDir%Include\%WindowsSDKVersion%km" ^
+            /I "%WDKCONTENTROOT%Include\%WindowsSDKVersion%km" ^
+            /c ^
+            Driver\Kernel\main.c ^
+            Driver\Kernel\memory.c ^
+            Driver\Kernel\process.c ^
+            /Fo%OUT_DIR%\
+
+        link.exe /nologo /DRIVER /SUBSYSTEM:NATIVE /ENTRY:DriverEntry ^
+            /OUT:%OUT_DIR%\%DRIVER_NAME%.sys ^
+            %OUT_DIR%\main.obj ^
+            %OUT_DIR%\memory.obj ^
+            %OUT_DIR%\process.obj ^
+            ntoskrnl.lib hal.lib
+        ```
+        Run the batch file from the WDK build environment. The resulting `driver.sys` will be in the `build/` directory.
+
+        **Verifying the build:**
+
+        After building you should have a `.sys` file. You can verify it's a valid kernel driver with:
+        ```
+        dumpbin /headers build\driver.sys | findstr "subsystem"
+        ```
+        It should show `native` as the subsystem.
+
+        **CI/CD — GitHub Actions:**
+
+        The repository includes a GitHub Actions workflow (`.github/workflows/build-driver.yml`) that automatically builds the kernel driver on every push or pull request that touches `Driver/` files. It uses the `windows-2022` runner which has the WDK pre-installed.
+
+        The workflow builds both Debug and Release configurations for x64 and uploads the Release `.sys` as a downloadable artifact. You can also trigger it manually from the Actions tab via `workflow_dispatch`.
+
+        A `.vcxproj` for the driver is included at `Driver/Kernel/driver.vcxproj` — this is the project file used by both the CI workflow and Visual Studio.
+
+        **Loading:**
+        You need to enable test signing first (requires a reboot):
+        ```
+        bcdedit /set testsigning on
+        ```
+
+        Then load the driver with the Service Control Manager:
+        ```
+        sc create OsmiumDrv type= kernel binPath= C:\path\to\driver.sys
+        sc start OsmiumDrv
+        ```
+
+        **Unloading:**
+        ```
+        sc stop OsmiumDrv
+        sc delete OsmiumDrv
+        ```
+
+        **Customizing the device name:**
+        The device name defaults to `NdisWanIp6` (defined in `Driver/Shared/ioctl.h`). You can change it by modifying the defines at the top of that file:
+        ```c
+        #define OSMIUM_DEVICE_NAME    L"NdisWanIp6"
+        #define OSMIUM_DEVICE_PATH    L"\\Device\\NdisWanIp6"
+        #define OSMIUM_SYMLINK_PATH   L"\\DosDevices\\NdisWanIp6"
+        #define OSMIUM_WIN32_DEVICE   L"\\\\.\\NdisWanIp6"
+        ```
+
+    - ### **How to initialize the driver interface**
+        The `driver_interface` class uses RAII - just create an instance and it opens the driver handle automatically. Check `is_connected()` to make sure the driver is loaded and accessible.
+
+        ```cpp
+        #include "osmium/Memory/DriverInterface/driver_interface.hpp"
+
+        void init_driver()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+            {
+                printf( "[!] Could not connect to the driver, make sure it's loaded!\n" );
+                return;
+            }
+
+            printf( "[+] Connected to kernel driver!\n" );
+        }
+        ```
+
+    - ### **How to attach to a target process**
+        You can attach to a target process either by PID or by process name. This sets the target for all subsequent read/write operations.
+
+        ```cpp
+        void attach_to_target()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            // Attach by process name
+            if( !driver->attach( L"target.exe" ) )
+            {
+                printf( "[!] Could not find the target process!\n" );
+                return;
+            }
+
+            printf( "[+] Attached to target.exe with PID: %d\n", driver->get_pid() );
+
+            // Or attach by PID directly if you already know it
+            // driver->attach( 1337 );
+        }
+        ```
+
+    - ### **How to read memory via the driver**
+        The `read<T>` template works the same way as in the `process` class. Pass the address you want to read and get the value back.
+
+        ```cpp
+        void read_via_driver()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            if( !driver->attach( L"target.exe" ) )
+                return;
+
+            const auto health = driver->read< float >( 0xDEADAFFE );
+
+            const auto ammo = driver->read< int32_t >( 0xDEADAFFE + 0x10 );
+
+            const auto ptr = driver->read< std::uintptr_t >( 0xDEADAFFE + 0x20 );
+
+            printf( "[+] Health: %.2f | Ammo: %d | Ptr: 0x%llX\n", health, ammo, ptr );
+        }
+        ```
+
+    - ### **How to write memory via the driver**
+        The `write<T>` template also mirrors the `process` class API. It returns true if the write succeeded.
+
+        The driver will first try a direct write and if the page is read-only it will automatically fall back to an MDL-based write, so you don't need to deal with `VirtualProtectEx` at all.
+
+        ```cpp
+        void write_via_driver()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            if( !driver->attach( L"target.exe" ) )
+                return;
+
+            // Write a float value
+            if( driver->write< float >( 0xDEADAFFE, 100.0f ) )
+                printf( "[+] Wrote health successfully!\n" );
+
+            // Write an integer
+            driver->write< int32_t >( 0xDEADAFFE + 0x10, 999 );
+
+            // Write a byte (e.g. NOP a check)
+            driver->write< uint8_t >( 0xDEADAFFE + 0x50, 0x90 );
+        }
+        ```
+
+    - ### **How to get the process base address via the driver**
+        The driver uses `PsGetProcessSectionBaseAddress` in kernel mode to retrieve the image base, which doesn't require a handle to the process.
+
+        ```cpp
+        void get_base_via_driver()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            if( !driver->attach( L"target.exe" ) )
+                return;
+
+            const auto base = driver->get_process_base();
+
+            if( !base )
+            {
+                printf( "[!] Could not get process base address!\n" );
+                return;
+            }
+
+            printf( "[+] target.exe base: 0x%llX\n", base );
+        }
+        ```
+
+    - ### **How to get a module base address via the driver**
+        The driver walks the PEB→Ldr→InMemoryOrderModuleList from kernel mode to find a module by name. It also handles WoW64 (32-bit) processes automatically.
+
+        ```cpp
+        void get_module_base_via_driver()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            if( !driver->attach( L"target.exe" ) )
+                return;
+
+            size_t module_size = 0;
+
+            const auto ntdll_base = driver->get_module_base( L"ntdll.dll", 0, &module_size );
+
+            if( ntdll_base )
+                printf( "[+] ntdll.dll -> 0x%llX (size: 0x%llX)\n", ntdll_base, module_size );
+
+            const auto kernel32_base = driver->get_module_base( L"kernel32.dll" );
+
+            if( kernel32_base )
+                printf( "[+] kernel32.dll -> 0x%llX\n", kernel32_base );
+        }
+        ```
+
+    - ### **How to read and write raw buffers via the driver**
+        For reading or writing arbitrary byte buffers (e.g. dumping a struct or patching multiple bytes at once) you can use `read_buffer` and `write_buffer`.
+
+        ```cpp
+        void raw_buffer_operations()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            if( !driver->attach( L"target.exe" ) )
+                return;
+
+            // Read 256 bytes from the target
+            std::vector< uint8_t > buffer( 256 );
+
+            if( driver->read_buffer( 0xDEADAFFE, buffer.data(), buffer.size() ) )
+                printf( "[+] Read %llu bytes from target!\n", buffer.size() );
+
+            // Write a NOP sled (e.g. patching out a check)
+            std::vector< uint8_t > nops( 5, 0x90 );
+
+            if( driver->write_buffer( 0xDEADAFFE + 0x100, nops.data(), nops.size() ) )
+                printf( "[+] Patched %llu bytes in target!\n", nops.size() );
+        }
+        ```
+
+    - ### **A full driver interface example**
+        Here is a complete example that shows how to use the driver interface from start to finish. This is essentially the driver-backed equivalent of using the `process` class for memory operations.
+
+        ```cpp
+        #include <cstdio>
+        #include <memory>
+        #include "osmium/Memory/DriverInterface/driver_interface.hpp"
+
+        int main()
+        {
+            // Create the driver interface (opens handle to the loaded driver)
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+            {
+                printf( "[!] Driver not loaded! Load it first:\n" );
+                printf( "    sc create OsmiumDrv type= kernel binPath= C:\\path\\to\\driver.sys\n" );
+                printf( "    sc start OsmiumDrv\n" );
+                return 1;
+            }
+
+            printf( "[+] Connected to kernel driver.\n" );
+
+            // Attach to the target process by name
+            if( !driver->attach( L"target.exe" ) )
+            {
+                printf( "[!] Could not find target.exe!\n" );
+                return 1;
+            }
+
+            printf( "[+] Attached to target.exe (PID: %d)\n", driver->get_pid() );
+
+            // Get the process base address
+            const auto base = driver->get_process_base();
+            printf( "[+] Process base: 0x%llX\n", base );
+
+            // Get a module base address
+            size_t mod_size = 0;
+            const auto ntdll = driver->get_module_base( L"ntdll.dll", 0, &mod_size );
+            printf( "[+] ntdll.dll: 0x%llX (0x%llX bytes)\n", ntdll, mod_size );
+
+            // Read some values from the target process
+            const auto value = driver->read< int32_t >( base + 0x1000 );
+            printf( "[+] Read value: %d\n", value );
+
+            // Write a value to the target process
+            if( driver->write< int32_t >( base + 0x1000, 1337 ) )
+                printf( "[+] Wrote 1337 to target!\n" );
+
+            // The driver_interface destructor will close the handle automatically
+            return 0;
+        }
+        ```
 
 - ### **Basic overlay implementation**
     - ### **How to setup your overlay**
