@@ -2,7 +2,7 @@ name: Build Kernel Driver
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'test/**' ]
     paths:
       - 'Driver/**'
       - '.github/workflows/build-driver.yml'
