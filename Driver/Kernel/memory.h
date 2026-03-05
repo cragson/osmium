@@ -5,8 +5,8 @@
 /*
  * Kernel-mode memory read/write operations.
  *
- * KmReadProcessMemory:  Attach to target, copy bytes out via RtlCopyMemory (SEH-protected).
- * KmWriteProcessMemory: Attach to target, copy bytes in. Falls back to MDL mapping for read-only pages.
+ * KmReadProcessMemory:  Cross-process read via MmCopyVirtualMemory.
+ * KmWriteProcessMemory: Cross-process write via MmCopyVirtualMemory, MDL fallback for read-only pages.
  */
 
 NTSTATUS KmReadProcessMemory(

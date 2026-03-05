@@ -1,14 +1,12 @@
 #include "memory.h"
 #include "ntstructs.h"
 
-/* Generic pool tag — avoids obvious strings */
-#define POOL_TAG_MDL 'lDmN'
-
 /*
  * KmReadProcessMemory
  *
- * Attaches to the target process context, copies memory out via RtlCopyMemory.
- * All accesses are SEH-protected to handle invalid/paged-out addresses gracefully.
+ * Uses MmCopyVirtualMemory to copy from the target process address space
+ * into the calling process's buffer. No KeStackAttachProcess needed —
+ * MmCopyVirtualMemory handles cross-process copies internally.
  */
 NTSTATUS KmReadProcessMemory(
 	IN  PEPROCESS TargetProcess,
@@ -18,81 +16,51 @@ NTSTATUS KmReadProcessMemory(
 	OUT PSIZE_T   BytesCopied
 )
 {
-	KAPC_STATE ApcState;
-	NTSTATUS   Status = STATUS_SUCCESS;
-
 	if ( !TargetProcess || !SourceAddress || !DestinationBuffer || Size == 0 )
 		return STATUS_INVALID_PARAMETER;
 
 	if ( BytesCopied )
 		*BytesCopied = 0;
 
-	KeStackAttachProcess( TargetProcess, &ApcState );
-
-	__try
-	{
-		ProbeForRead( SourceAddress, Size, 1 );
-		RtlCopyMemory( DestinationBuffer, SourceAddress, Size );
-
-		if ( BytesCopied )
-			*BytesCopied = Size;
-	}
-	__except ( EXCEPTION_EXECUTE_HANDLER )
-	{
-		Status = GetExceptionCode();
-	}
-
-	KeUnstackDetachProcess( &ApcState );
-
-	return Status;
-}
-
-/*
- * KmWriteProcessMemoryDirect
- *
- * Internal: tries a direct RtlCopyMemory write while attached.
- * Returns STATUS_SUCCESS or an exception code.
- */
-static NTSTATUS KmWriteProcessMemoryDirect(
-	IN  PVOID  TargetAddress,
-	IN  PVOID  SourceBuffer,
-	IN  SIZE_T Size
-)
-{
-	NTSTATUS Status = STATUS_SUCCESS;
-
-	__try
-	{
-		ProbeForWrite( TargetAddress, Size, 1 );
-		RtlCopyMemory( TargetAddress, SourceBuffer, Size );
-	}
-	__except ( EXCEPTION_EXECUTE_HANDLER )
-	{
-		Status = GetExceptionCode();
-	}
-
-	return Status;
+	return MmCopyVirtualMemory(
+		TargetProcess,
+		SourceAddress,
+		PsGetCurrentProcess(),
+		DestinationBuffer,
+		Size,
+		KernelMode,
+		BytesCopied
+	);
 }
 
 /*
  * KmWriteProcessMemoryMdl
  *
- * Internal: MDL-based write for read-only pages.
- * Allocates an MDL, locks the pages, maps them as read-write in system space, then copies.
+ * Internal: MDL-based write for read-only pages in the target process.
+ * Attaches to the target to lock and map the pages into system space,
+ * then detaches before copying so the caller's source buffer is valid.
  */
 static NTSTATUS KmWriteProcessMemoryMdl(
-	IN  PVOID  TargetAddress,
-	IN  PVOID  SourceBuffer,
-	IN  SIZE_T Size
+	IN  PEPROCESS TargetProcess,
+	IN  PVOID     TargetAddress,
+	IN  PVOID     SourceBuffer,
+	IN  SIZE_T    Size
 )
 {
-	PMDL   Mdl = NULL;
-	PVOID  Mapped = NULL;
-	NTSTATUS Status = STATUS_SUCCESS;
+	PMDL       Mdl = NULL;
+	PVOID      Mapped = NULL;
+	KAPC_STATE ApcState;
+	NTSTATUS   Status = STATUS_SUCCESS;
+
+	/* Attach to target so MDL operations resolve the correct physical pages */
+	KeStackAttachProcess( TargetProcess, &ApcState );
 
 	Mdl = IoAllocateMdl( TargetAddress, (ULONG)Size, FALSE, FALSE, NULL );
 	if ( !Mdl )
+	{
+		KeUnstackDetachProcess( &ApcState );
 		return STATUS_INSUFFICIENT_RESOURCES;
+	}
 
 	__try
 	{
@@ -101,6 +69,7 @@ static NTSTATUS KmWriteProcessMemoryMdl(
 	__except ( EXCEPTION_EXECUTE_HANDLER )
 	{
 		IoFreeMdl( Mdl );
+		KeUnstackDetachProcess( &ApcState );
 		return GetExceptionCode();
 	}
 
@@ -117,6 +86,7 @@ static NTSTATUS KmWriteProcessMemoryMdl(
 	{
 		MmUnlockPages( Mdl );
 		IoFreeMdl( Mdl );
+		KeUnstackDetachProcess( &ApcState );
 		return STATUS_NONE_MAPPED;
 	}
 
@@ -127,8 +97,16 @@ static NTSTATUS KmWriteProcessMemoryMdl(
 		MmUnmapLockedPages( Mapped, Mdl );
 		MmUnlockPages( Mdl );
 		IoFreeMdl( Mdl );
+		KeUnstackDetachProcess( &ApcState );
 		return Status;
 	}
+
+	/*
+	 * Detach from target — the MDL mapping is in system address space
+	 * and remains valid in any process context. This makes SourceBuffer
+	 * (a user-mode address in the calling process) accessible again.
+	 */
+	KeUnstackDetachProcess( &ApcState );
 
 	__try
 	{
@@ -149,8 +127,8 @@ static NTSTATUS KmWriteProcessMemoryMdl(
 /*
  * KmWriteProcessMemory
  *
- * Attaches to target, attempts direct write first.
- * If that fails (read-only page), falls back to MDL-based mapping.
+ * Writes to target process memory. Tries MmCopyVirtualMemory first (fast path).
+ * If that fails (e.g. read-only page), falls back to MDL-based mapping.
  */
 NTSTATUS KmWriteProcessMemory(
 	IN  PEPROCESS TargetProcess,
@@ -160,8 +138,7 @@ NTSTATUS KmWriteProcessMemory(
 	OUT PSIZE_T   BytesCopied
 )
 {
-	KAPC_STATE ApcState;
-	NTSTATUS   Status;
+	NTSTATUS Status;
 
 	if ( !TargetProcess || !TargetAddress || !SourceBuffer || Size == 0 )
 		return STATUS_INVALID_PARAMETER;
@@ -169,18 +146,22 @@ NTSTATUS KmWriteProcessMemory(
 	if ( BytesCopied )
 		*BytesCopied = 0;
 
-	KeStackAttachProcess( TargetProcess, &ApcState );
+	/* Fast path: MmCopyVirtualMemory */
+	Status = MmCopyVirtualMemory(
+		PsGetCurrentProcess(),
+		SourceBuffer,
+		TargetProcess,
+		TargetAddress,
+		Size,
+		KernelMode,
+		BytesCopied
+	);
 
-	/* Try direct write first */
-	Status = KmWriteProcessMemoryDirect( TargetAddress, SourceBuffer, Size );
+	if ( NT_SUCCESS( Status ) )
+		return Status;
 
-	if ( !NT_SUCCESS( Status ) )
-	{
-		/* Fall back to MDL-based write for protected pages */
-		Status = KmWriteProcessMemoryMdl( TargetAddress, SourceBuffer, Size );
-	}
-
-	KeUnstackDetachProcess( &ApcState );
+	/* Slow path: MDL-based write for protected pages */
+	Status = KmWriteProcessMemoryMdl( TargetProcess, TargetAddress, SourceBuffer, Size );
 
 	if ( NT_SUCCESS( Status ) && BytesCopied )
 		*BytesCopied = Size;
