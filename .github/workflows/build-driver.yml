@@ -31,7 +31,7 @@ jobs:
 
       - name: Build driver
         working-directory: Driver/Kernel
-        run: msbuild driver.vcxproj /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }} /m
+        run: msbuild driver.vcxproj /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }} /p:SignMode=Off /m
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
