@@ -159,7 +159,7 @@ static NTSTATUS KmGetModuleBaseByName32(
 		{
 			KM_LDR_DATA_TABLE_ENTRY32 Entry32;
 			ULONG EntryAddress32;
-			WCHAR NameBuffer[MAX_PATH];
+			WCHAR NameBuffer[260];
 
 			/* InMemoryOrderLinks is the second LIST_ENTRY32 in the structure */
 			EntryAddress32 = Current32 - FIELD_OFFSET( KM_LDR_DATA_TABLE_ENTRY32, InMemoryOrderLinks );

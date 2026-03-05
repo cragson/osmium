@@ -1,4 +1,4 @@
-#include <ntddk.h>
+#include <ntifs.h>
 #include "../Shared/ioctl.h"
 #include "memory.h"
 #include "process.h"
