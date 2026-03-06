@@ -1,64 +1,62 @@
-#include <cstdio>
-#include <cstring>
+#include <print>
 #include <memory>
 #include <string>
+#include <string_view>
 #include "../Memory/DriverInterface/driver_interface.hpp"
 
-static std::wstring to_wide( const char* s )
+static std::wstring to_wide( std::string_view s )
 {
-	std::wstring ws;
-	while( *s ) ws += static_cast< wchar_t >( *s++ );
-	return ws;
+	return { s.begin(), s.end() };
 }
 
-void print_help( const char* prog )
+static void print_help( std::string_view prog )
 {
-	printf( "%s - Get the base address and size of loaded modules via the kernel driver.\n", prog );
-	printf( "\n" );
-	printf( "Description:\n" );
-	printf( "  Attaches to a target process and resolves the base address and size\n" );
-	printf( "  of one or more loaded modules by walking the PEB module list from\n" );
-	printf( "  kernel mode. Handles both native x64 and WoW64 processes.\n" );
-	printf( "\n" );
-	printf( "Usage:\n" );
-	printf( "  %s <process_name> <module_name> [module_name2 ...]\n", prog );
-	printf( "  %s --help\n", prog );
-	printf( "\n" );
-	printf( "Arguments:\n" );
-	printf( "  process_name    Name of the target process (e.g. target.exe)\n" );
-	printf( "  module_name     Name of the module to look up (e.g. ntdll.dll)\n" );
-	printf( "                  Multiple module names can be specified.\n" );
-	printf( "\n" );
-	printf( "Examples:\n" );
-	printf( "  %s notepad.exe ntdll.dll\n", prog );
-	printf( "  %s target.exe ntdll.dll kernel32.dll user32.dll\n", prog );
+	std::print( R"({0} - Get the base address and size of loaded modules via the kernel driver.
+
+Description:
+  Attaches to a target process and resolves the base address and size
+  of one or more loaded modules by walking the PEB module list from
+  kernel mode. Handles both native x64 and WoW64 processes.
+
+Usage:
+  {0} <process_name> <module_name> [module_name2 ...]
+  {0} --help
+
+Arguments:
+  process_name    Name of the target process (e.g. target.exe)
+  module_name     Name of the module to look up (e.g. ntdll.dll)
+                  Multiple module names can be specified.
+
+Examples:
+  {0} notepad.exe ntdll.dll
+  {0} target.exe ntdll.dll kernel32.dll user32.dll
+)", prog );
 }
 
 int main( int argc, char* argv[] )
 {
-	if( argc < 3 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "-h" ) == 0 )
+	if( argc < 3 || std::string_view{ argv[1] } == "--help" || std::string_view{ argv[1] } == "-h" )
 	{
 		print_help( argv[0] );
-		return argc > 1 && ( strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "-h" ) == 0 ) ? 0 : 1;
+		return ( argc > 1 && ( std::string_view{ argv[1] } == "--help" || std::string_view{ argv[1] } == "-h" ) ) ? 0 : 1;
 	}
 
 	const auto process_name = to_wide( argv[1] );
-
 	const auto driver = std::make_unique< driver_interface >();
 
 	if( !driver->is_connected() )
 	{
-		printf( "[!] Could not connect to the driver!\n" );
+		std::println( "[!] Could not connect to the driver!" );
 		return 1;
 	}
 
 	if( !driver->attach( process_name ) )
 	{
-		printf( "[!] Could not find process '%s'!\n", argv[1] );
+		std::println( "[!] Could not find process '{}'!", argv[1] );
 		return 1;
 	}
 
-	printf( "[+] Attached to %s (PID: %u)\n", argv[1], driver->get_pid() );
+	std::println( "[+] Attached to {} (PID: {})", argv[1], driver->get_pid() );
 
 	for( int i = 2; i < argc; i++ )
 	{
@@ -68,11 +66,9 @@ int main( int argc, char* argv[] )
 		const auto base = driver->get_module_base( module_name, 0, &module_size );
 
 		if( base )
-			printf( "[+] %-20s -> 0x%llX (size: 0x%llX)\n", argv[i],
-				static_cast< unsigned long long >( base ),
-				static_cast< unsigned long long >( module_size ) );
+			std::println( "[+] {:<20} -> 0x{:X} (size: 0x{:X})", argv[i], base, module_size );
 		else
-			printf( "[!] %-20s -> not found\n", argv[i] );
+			std::println( "[!] {:<20} -> not found", argv[i] );
 	}
 
 	return 0;

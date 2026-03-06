@@ -64,7 +64,7 @@ jobs:
           if not exist examples\build mkdir examples\build
           for %%f in (examples\*.cpp) do (
             echo Compiling %%f ...
-            cl.exe /nologo /std:c++17 /EHsc /O2 /DNDEBUG /DWIN32 /D_WINDOWS /Fe:examples\build\%%~nf.exe %%f
+            cl.exe /nologo /std:c++latest /EHsc /O2 /DNDEBUG /DWIN32 /D_WINDOWS /Fe:examples\build\%%~nf.exe %%f
             if errorlevel 1 exit /b 1
           )
 

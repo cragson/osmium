@@ -1,74 +1,73 @@
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <print>
 #include <memory>
 #include <string>
+#include <string_view>
 #include "../Memory/DriverInterface/driver_interface.hpp"
 
-static std::wstring to_wide( const char* s )
+static std::wstring to_wide( std::string_view s )
 {
-	std::wstring ws;
-	while( *s ) ws += static_cast< wchar_t >( *s++ );
-	return ws;
+	return { s.begin(), s.end() };
 }
 
-void print_help( const char* prog )
+static void print_help( std::string_view prog )
 {
-	printf( "%s - Attach to a target process via the kernel driver.\n", prog );
-	printf( "\n" );
-	printf( "Description:\n" );
-	printf( "  Connects to the kernel driver and attaches to a target process\n" );
-	printf( "  by name or PID, then prints the resolved PID.\n" );
-	printf( "\n" );
-	printf( "Usage:\n" );
-	printf( "  %s <process_name>     Attach by process name\n", prog );
-	printf( "  %s --pid <pid>        Attach by process ID\n", prog );
-	printf( "  %s --help             Show this help\n", prog );
-	printf( "\n" );
-	printf( "Examples:\n" );
-	printf( "  %s notepad.exe\n", prog );
-	printf( "  %s --pid 1337\n", prog );
+	std::print( R"({0} - Attach to a target process via the kernel driver.
+
+Description:
+  Connects to the kernel driver and attaches to a target process
+  by name or PID, then prints the resolved PID.
+
+Usage:
+  {0} <process_name>     Attach by process name
+  {0} --pid <pid>        Attach by process ID
+  {0} --help             Show this help
+
+Examples:
+  {0} notepad.exe
+  {0} --pid 1337
+)", prog );
 }
 
 int main( int argc, char* argv[] )
 {
-	if( argc < 2 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "-h" ) == 0 )
+	if( argc < 2 || std::string_view{ argv[1] } == "--help" || std::string_view{ argv[1] } == "-h" )
 	{
 		print_help( argv[0] );
 		return argc < 2 ? 1 : 0;
 	}
 
+	const auto arg1 = std::string_view{ argv[1] };
 	const auto driver = std::make_unique< driver_interface >();
 
 	if( !driver->is_connected() )
 	{
-		printf( "[!] Could not connect to the driver!\n" );
+		std::println( "[!] Could not connect to the driver!" );
 		return 1;
 	}
 
-	if( strcmp( argv[1], "--pid" ) == 0 )
+	if( arg1 == "--pid" )
 	{
 		if( argc < 3 )
 		{
-			printf( "[!] --pid requires a process ID argument.\n" );
+			std::println( "[!] --pid requires a process ID argument." );
 			return 1;
 		}
 
-		const auto pid = static_cast< DWORD >( strtoul( argv[2], nullptr, 10 ) );
+		const auto pid = static_cast< DWORD >( std::stoul( argv[2] ) );
 		driver->attach( pid );
-		printf( "[+] Attached to PID: %u\n", pid );
+		std::println( "[+] Attached to PID: {}", pid );
 	}
 	else
 	{
-		const auto name = to_wide( argv[1] );
+		const auto name = to_wide( arg1 );
 
 		if( !driver->attach( name ) )
 		{
-			printf( "[!] Could not find process '%s'!\n", argv[1] );
+			std::println( "[!] Could not find process '{}'!", arg1 );
 			return 1;
 		}
 
-		printf( "[+] Attached to %s (PID: %u)\n", argv[1], driver->get_pid() );
+		std::println( "[+] Attached to {} (PID: {})", arg1, driver->get_pid() );
 	}
 
 	return 0;
