@@ -1,8 +1,8 @@
 #include "stealth.h"
 #include <ntddk.h>
 
-/* Undocumented APIs — not declared in WDK headers */
-NTKERNELAPI PETHREAD PsGetNextProcessThread(
+/* Undocumented API types */
+typedef PETHREAD ( NTAPI *PFN_PsGetNextProcessThread )(
 	IN PEPROCESS Process,
 	IN PETHREAD  Thread
 );
@@ -34,8 +34,15 @@ static NTSTATUS FindThreadListOffsets(
 	PETHREAD  FirstThread;
 	ULONG_PTR ThreadAddr;
 	ULONG     Off;
+	UNICODE_STRING FuncName;
+	PFN_PsGetNextProcessThread pfnPsGetNextProcessThread;
 
-	FirstThread = PsGetNextProcessThread( Process, NULL );
+	RtlInitUnicodeString( &FuncName, L"PsGetNextProcessThread" );
+	pfnPsGetNextProcessThread = (PFN_PsGetNextProcessThread)MmGetSystemRoutineAddress( &FuncName );
+	if ( !pfnPsGetNextProcessThread )
+		return STATUS_NOT_FOUND;
+
+	FirstThread = pfnPsGetNextProcessThread( Process, NULL );
 	if ( !FirstThread )
 		return STATUS_NOT_FOUND;
 
