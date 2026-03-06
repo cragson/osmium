@@ -5,11 +5,15 @@ on:
     branches: [ main, 'feature/kernel-driver' ]
     paths:
       - 'Driver/**'
+      - 'Memory/DriverInterface/**'
+      - 'examples/**'
       - '.github/workflows/build-driver.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'Driver/**'
+      - 'Memory/DriverInterface/**'
+      - 'examples/**'
       - '.github/workflows/build-driver.yml'
   workflow_dispatch:
 
@@ -42,19 +46,57 @@ jobs:
             Driver/build/${{ matrix.platform }}/${{ matrix.configuration }}/*.sys
           if-no-files-found: error
 
+  build-examples:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Compile examples
+        shell: cmd
+        run: |
+          if not exist examples\build mkdir examples\build
+          for %%f in (examples\*.cpp) do (
+            echo Compiling %%f ...
+            cl.exe /nologo /std:c++17 /EHsc /O2 /DNDEBUG /DWIN32 /D_WINDOWS /Fe:examples\build\%%~nf.exe %%f
+            if errorlevel 1 exit /b 1
+          )
+
+      - name: Upload example binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: OsmiumExamples-x64
+          path: examples/build/*.exe
+          if-no-files-found: error
+
   release:
-    needs: build
+    needs: [ build, build-examples ]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/feature/kernel-driver'
     permissions:
       contents: write
 
     steps:
-      - name: Download Release artifacts
+      - name: Download driver artifacts
         uses: actions/download-artifact@v4
         with:
           name: OsmiumDriver-x64-Release
-          path: artifacts
+          path: artifacts/driver
+
+      - name: Download example artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: OsmiumExamples-x64
+          path: artifacts/examples
+
+      - name: Zip example binaries
+        run: cd artifacts/examples && zip -j ../../OsmiumExamples-x64.zip *.exe
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -66,5 +108,11 @@ jobs:
 
             **Commit:** ${{ github.sha }}
             **Ref:** `${{ github.ref_name }}`
+
+            **Artifacts:**
+            - `OsmiumDriver.sys` — Kernel driver (Release x64)
+            - `OsmiumExamples-x64.zip` — Compiled example binaries (Release x64)
           prerelease: true
-          files: artifacts/*.sys
+          files: |
+            artifacts/driver/*.sys
+            OsmiumExamples-x64.zip
