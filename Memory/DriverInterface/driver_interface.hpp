@@ -409,6 +409,209 @@ public:
 		return success && response.Status == 0;
 	}
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Hides all threads of a process by unlinking them from the process's
+	///          ThreadListHead in EPROCESS. This prevents thread enumeration APIs from
+	///          seeing the threads.</summary>
+	///
+	/// <param name="pid">The process ID. If 0, uses the currently attached PID.</param>
+	/// <param name="out_hidden">Optional pointer to receive the number of threads hidden.</param>
+	///
+	/// <returns>True if the threads were successfully hidden, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool hide_threads( DWORD pid = 0, ULONG* out_hidden = nullptr )
+	{
+		if( !this->is_connected() )
+			return false;
+
+		if( pid == 0 )
+			pid = this->m_pid;
+
+		HIDE_THREADS_REQUEST request = {};
+		request.ProcessId = static_cast< ULONG64 >( pid );
+
+		HIDE_THREADS_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			this->m_handle,
+			IOCTL_HIDE_THREADS,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( out_hidden )
+			*out_hidden = response.ThreadsHidden;
+
+		return success && response.Status == 0;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Enumerates registered kernel notification callbacks (process, thread,
+	///          or image load). Returns the array index and function address of each
+	///          active callback.</summary>
+	///
+	/// <param name="type">Callback type: CALLBACK_TYPE_PROCESS (0), CALLBACK_TYPE_THREAD (1),
+	///                     or CALLBACK_TYPE_IMAGE (2).</param>
+	/// <param name="entries">Output array of CALLBACK_ENTRY structs.</param>
+	/// <param name="max_entries">Maximum entries the array can hold.</param>
+	/// <param name="out_count">Pointer to receive the number of entries returned.</param>
+	///
+	/// <returns>True if enumeration succeeded, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool enum_callbacks( ULONG type, CALLBACK_ENTRY* entries, ULONG max_entries, ULONG* out_count )
+	{
+		if( !this->is_connected() || !entries || !out_count )
+			return false;
+
+		ENUM_CALLBACKS_REQUEST request = {};
+		request.CallbackType = type;
+
+		ENUM_CALLBACKS_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			this->m_handle,
+			IOCTL_ENUM_CALLBACKS,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( !success || response.Status != 0 )
+			return false;
+
+		const auto count = min( response.Count, max_entries );
+		memcpy( entries, response.Entries, count * sizeof( CALLBACK_ENTRY ) );
+		*out_count = count;
+
+		return true;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Removes a single kernel notification callback by type and array index.
+	///          Use enum_callbacks() first to discover the index.</summary>
+	///
+	/// <param name="type">Callback type: CALLBACK_TYPE_PROCESS (0), CALLBACK_TYPE_THREAD (1),
+	///                     or CALLBACK_TYPE_IMAGE (2).</param>
+	/// <param name="index">The array index of the callback to remove (from enumeration).</param>
+	///
+	/// <returns>True if the callback was successfully removed, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool remove_callback( ULONG type, ULONG index )
+	{
+		if( !this->is_connected() )
+			return false;
+
+		REMOVE_CALLBACK_REQUEST request = {};
+		request.CallbackType = type;
+		request.Index = index;
+
+		REMOVE_CALLBACK_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			this->m_handle,
+			IOCTL_REMOVE_CALLBACK,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		return success && response.Status == 0;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Removes all registered callbacks of a given type. Enumerates first,
+	///          then removes each one.</summary>
+	///
+	/// <param name="type">Callback type: CALLBACK_TYPE_PROCESS (0), CALLBACK_TYPE_THREAD (1),
+	///                     or CALLBACK_TYPE_IMAGE (2).</param>
+	/// <param name="out_removed">Optional pointer to receive the number of callbacks removed.</param>
+	///
+	/// <returns>True if all callbacks were successfully removed, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool remove_all_callbacks( ULONG type, ULONG* out_removed = nullptr )
+	{
+		CALLBACK_ENTRY entries[MAX_CALLBACK_ENTRIES] = {};
+		ULONG count = 0;
+
+		if( out_removed )
+			*out_removed = 0;
+
+		if( !enum_callbacks( type, entries, MAX_CALLBACK_ENTRIES, &count ) )
+			return false;
+
+		ULONG removed = 0;
+
+		for( ULONG i = 0; i < count; i++ )
+		{
+			if( remove_callback( type, entries[i].Index ) )
+				removed++;
+		}
+
+		if( out_removed )
+			*out_removed = removed;
+
+		return removed == count;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Strips (closes) all handles to a process held by other processes.
+	///          This prevents other processes from inspecting or manipulating
+	///          the target via handle-based APIs.</summary>
+	///
+	/// <param name="pid">The process ID. If 0, uses the currently attached PID.</param>
+	/// <param name="out_stripped">Optional pointer to receive the number of handles closed.</param>
+	///
+	/// <returns>True if the operation succeeded, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool strip_handles( DWORD pid = 0, ULONG* out_stripped = nullptr )
+	{
+		if( !this->is_connected() )
+			return false;
+
+		if( pid == 0 )
+			pid = this->m_pid;
+
+		STRIP_HANDLES_REQUEST request = {};
+		request.ProcessId = static_cast< ULONG64 >( pid );
+
+		STRIP_HANDLES_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			this->m_handle,
+			IOCTL_STRIP_HANDLES,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( out_stripped )
+			*out_stripped = response.HandlesStripped;
+
+		return success && response.Status == 0;
+	}
+
 private:
 	HANDLE m_handle;
 	DWORD  m_pid;

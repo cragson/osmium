@@ -87,6 +87,7 @@
     <ClCompile Include="memory.c" />
     <ClCompile Include="process.c" />
     <ClCompile Include="eprocess.c" />
+    <ClCompile Include="stealth.c" />
   </ItemGroup>
 
   <!-- Header files -->
@@ -94,6 +95,7 @@
     <ClInclude Include="memory.h" />
     <ClInclude Include="process.h" />
     <ClInclude Include="eprocess.h" />
+    <ClInclude Include="stealth.h" />
     <ClInclude Include="ntstructs.h" />
     <ClInclude Include="..\Shared\ioctl.h" />
   </ItemGroup>

