@@ -1,7 +1,5 @@
 #include "eprocess.h"
-
-/* Exported by ntoskrnl — the EPROCESS of the System process (PID 4) */
-extern PEPROCESS PsInitialSystemProcess;
+#include <ntddk.h>  /* PsInitialSystemProcess */
 
 /* Cached offsets resolved once at driver load */
 static ULONG g_ActiveProcessLinksOffset = 0;
