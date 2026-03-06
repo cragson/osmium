@@ -1,6 +1,19 @@
 #include "stealth.h"
 #include <ntddk.h>
 
+/* Undocumented APIs — not declared in WDK headers */
+NTKERNELAPI PETHREAD PsGetNextProcessThread(
+	IN PEPROCESS Process,
+	IN PETHREAD  Thread
+);
+
+NTSYSCALLAPI NTSTATUS NTAPI ZwQuerySystemInformation(
+	IN  ULONG  SystemInformationClass,
+	OUT PVOID  SystemInformation,
+	IN  ULONG  SystemInformationLength,
+	OUT PULONG ReturnLength OPTIONAL
+);
+
 /* -----------------------------------------------------------------------
  * Thread hiding — unlink ETHREAD entries from EPROCESS.ThreadListHead
  * ----------------------------------------------------------------------- */
@@ -345,7 +358,7 @@ NTSTATUS KmStripProcessHandles(
 		}
 
 		Status = ZwQuerySystemInformation(
-			(SYSTEM_INFORMATION_CLASS)SystemExtendedHandleInformation,
+			SystemExtendedHandleInformation,
 			Buffer,
 			BufferSize,
 			&ReturnLength
