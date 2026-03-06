@@ -1835,14 +1835,32 @@ The framework contains the following modules:
         ```
 
     - ### **How to scan for forensic artifacts**
-        The `scan_artifacts()` method scans for execution traces left by a given executable across four forensic sources: Prefetch files, ShimCache (AppCompatCache), BAM (Background Activity Moderator) registry entries, and the AmCache hive. All findings are also logged via kernel `DbgPrint` (visible in WinDbg/DebugView). Returns `std::optional<std::vector<artifact_info>>` for direct use with range-based for loops.
+        The `scan_artifacts()` method scans for execution traces left by a given executable across **15 forensic sources** from kernel mode. All findings are also logged via kernel `DbgPrint` (visible in WinDbg/DebugView). Returns `std::optional<std::vector<artifact_info>>` for direct use with range-based for loops.
 
-        Available artifact type flags (combine with `|`):
-        - `ARTIFACT_TYPE_PREFETCH` — Prefetch files in `C:\Windows\Prefetch`
-        - `ARTIFACT_TYPE_SHIMCACHE` — ShimCache entries in the registry
-        - `ARTIFACT_TYPE_BAM` — BAM entries per user SID
-        - `ARTIFACT_TYPE_AMCACHE` — AmCache hive presence
-        - `ARTIFACT_TYPE_ALL` — all of the above
+        **Registry-based sources:**
+        - `ARTIFACT_TYPE_PREFETCH` — Prefetch files in `C:\Windows\Prefetch` (filename prefix matching)
+        - `ARTIFACT_TYPE_SHIMCACHE` — ShimCache (AppCompatCache) binary blob in the registry
+        - `ARTIFACT_TYPE_BAM` — BAM (Background Activity Moderator) entries per user SID
+        - `ARTIFACT_TYPE_AMCACHE` — AmCache hive file presence and size
+        - `ARTIFACT_TYPE_USERASSIST` — UserAssist execution history per user (ROT13-decoded)
+        - `ARTIFACT_TYPE_MUICACHE` — MUICache application display name cache per user
+        - `ARTIFACT_TYPE_RECENTAPPS` — Windows Search RecentApps entries per user
+        - `ARTIFACT_TYPE_RUNMRU` — Run dialog MRU command history per user
+
+        **Binary file scanners** (searches for the executable name inside the file):
+        - `ARTIFACT_TYPE_SRUM` — System Resource Usage Monitor database (`SRUDB.dat`)
+        - `ARTIFACT_TYPE_EVTLOG` — Event Logs (`Security.evtx`, `Sysmon%4Operational.evtx`, `Application.evtx`)
+        - `ARTIFACT_TYPE_SUPERFETCH` — Superfetch/SysMain database (`AgAppLaunch.db`)
+
+        **Per-user filesystem scanners** (resolves each user's profile path via the registry):
+        - `ARTIFACT_TYPE_TIMELINE` — Windows Timeline / ActivitiesCache databases per user
+        - `ARTIFACT_TYPE_JUMPLISTS` — Jump Lists (`.automaticDestinations-ms` files) per user
+        - `ARTIFACT_TYPE_RECENTDOCS` — Recent Documents (`.lnk` shortcut files) per user
+
+        **Directory enumeration scanner:**
+        - `ARTIFACT_TYPE_WER` — Windows Error Reporting crash reports (`ReportArchive` + `ReportQueue`)
+
+        Use `ARTIFACT_TYPE_ALL` to scan all 15 sources at once, or combine individual flags with `|`.
 
         ```cpp
         #include "osmium/Memory/DriverInterface/driver_interface.hpp"
@@ -1854,7 +1872,7 @@ The framework contains the following modules:
             if( !driver->is_connected() )
                 return;
 
-            // Scan for all artifact types
+            // Scan for all 15 artifact types
             if( auto artifacts = driver->scan_artifacts( L"implant.exe" ) )
             {
                 printf( "[+] Found %llu forensic artifacts:\n", artifacts->size() );
@@ -1867,9 +1885,10 @@ The framework contains the following modules:
                 printf( "[!] Artifact scan failed.\n" );
             }
 
-            // Scan only Prefetch and ShimCache
+            // Scan only specific sources
             if( auto artifacts = driver->scan_artifacts( L"implant.exe",
-                ARTIFACT_TYPE_PREFETCH | ARTIFACT_TYPE_SHIMCACHE ) )
+                ARTIFACT_TYPE_PREFETCH | ARTIFACT_TYPE_SHIMCACHE |
+                ARTIFACT_TYPE_USERASSIST | ARTIFACT_TYPE_EVTLOG ) )
             {
                 for( const auto& a : *artifacts )
                     wprintf( L"    %s\n", a.path.c_str() );
