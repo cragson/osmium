@@ -612,6 +612,62 @@ public:
 		return success && response.Status == 0;
 	}
 
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Scans for forensic execution artifacts left by a given executable.
+	///          Searches Prefetch files, ShimCache (AppCompatCache), BAM entries,
+	///          and the AmCache hive. Results are also logged via kernel DbgPrint.</summary>
+	///
+	/// <param name="executable_name">The executable filename to search for (e.g. L"payload.exe").</param>
+	/// <param name="artifact_types">Bitmask of artifact types to scan (ARTIFACT_TYPE_ALL for all).</param>
+	/// <param name="entries">Output array of ARTIFACT_ENTRY structs.</param>
+	/// <param name="max_entries">Maximum entries the array can hold.</param>
+	/// <param name="out_count">Pointer to receive the number of artifacts found.</param>
+	///
+	/// <returns>True if the scan completed, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool scan_artifacts(
+		const std::wstring& executable_name,
+		ULONG artifact_types,
+		ARTIFACT_ENTRY* entries,
+		ULONG max_entries,
+		ULONG* out_count
+	)
+	{
+		if( !this->is_connected() || executable_name.empty() || !entries || !out_count )
+			return false;
+
+		SCAN_ARTIFACTS_REQUEST request = {};
+		request.ArtifactTypes = artifact_types;
+
+		const auto copy_len = min( executable_name.size(), MAX_MODULE_NAME_LENGTH - 1 );
+		memcpy( request.ExecutableName, executable_name.c_str(), copy_len * sizeof( WCHAR ) );
+		request.ExecutableName[copy_len] = L'\0';
+
+		SCAN_ARTIFACTS_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			this->m_handle,
+			IOCTL_SCAN_ARTIFACTS,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( !success || response.Status != 0 )
+			return false;
+
+		const auto count = min( response.Count, max_entries );
+		memcpy( entries, response.Entries, count * sizeof( ARTIFACT_ENTRY ) );
+		*out_count = count;
+
+		return true;
+	}
+
 private:
 	HANDLE m_handle;
 	DWORD  m_pid;

@@ -4,6 +4,7 @@
 #include "process.h"
 #include "eprocess.h"
 #include "stealth.h"
+#include "forensics.h"
 
 /* -----------------------------------------------------------------------
  * Debug print macro — stripped in release builds
@@ -481,6 +482,53 @@ static NTSTATUS DispatchDeviceControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Ir
 				Response->Status = (LONG)Status;
 				Response->HandlesStripped = Stripped;
 				BytesReturned = sizeof( STRIP_HANDLES_RESPONSE );
+
+				Status = STATUS_SUCCESS;
+			}
+
+			break;
+		}
+
+		/* ---------------------------------------------------------------
+		 * IOCTL_SCAN_ARTIFACTS
+		 * --------------------------------------------------------------- */
+		case IOCTL_SCAN_ARTIFACTS:
+		{
+			PSCAN_ARTIFACTS_REQUEST  Request;
+			PSCAN_ARTIFACTS_RESPONSE Response;
+
+			if ( InputLength < sizeof( SCAN_ARTIFACTS_REQUEST ) ||
+				 OutputLength < sizeof( SCAN_ARTIFACTS_RESPONSE ) )
+			{
+				Status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			Request  = (PSCAN_ARTIFACTS_REQUEST)SystemBuffer;
+			Response = (PSCAN_ARTIFACTS_RESPONSE)SystemBuffer;
+
+			/* Ensure null termination */
+			Request->ExecutableName[MAX_MODULE_NAME_LENGTH - 1] = L'\0';
+
+			{
+				WCHAR Name[MAX_MODULE_NAME_LENGTH];
+				ULONG Types;
+				ULONG Found = 0;
+
+				RtlCopyMemory( Name, Request->ExecutableName, sizeof( Name ) );
+				Types = Request->ArtifactTypes;
+
+				Status = KmScanForensicArtifacts(
+					Name,
+					Types,
+					Response->Entries,
+					MAX_ARTIFACT_ENTRIES,
+					&Found
+				);
+
+				Response->Status = (LONG)Status;
+				Response->Count  = Found;
+				BytesReturned = sizeof( SCAN_ARTIFACTS_RESPONSE );
 
 				Status = STATUS_SUCCESS;
 			}
