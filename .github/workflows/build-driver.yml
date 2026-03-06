@@ -98,21 +98,29 @@ jobs:
       - name: Zip example binaries
         run: cd artifacts/examples && zip -j ../../OsmiumExamples-x64.zip *.exe
 
+      - name: Delete existing dev release
+        run: gh release delete driver-dev-latest --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: driver-dev-${{ github.sha }}
-          name: "Kernel Driver Dev Build (${{ github.sha }})"
+          tag_name: driver-dev-latest
+          name: "Kernel Driver Dev Build"
           body: |
             Automated development build from `feature/kernel-driver`.
 
-            **Commit:** ${{ github.sha }}
-            **Ref:** `${{ github.ref_name }}`
+            **Commit:** `${{ github.sha }}`
+            **Branch:** `${{ github.ref_name }}`
+            **Updated:** ${{ github.event.head_commit.timestamp }}
 
             **Artifacts:**
             - `OsmiumDriver.sys` — Kernel driver (Release x64)
             - `OsmiumExamples-x64.zip` — Compiled example binaries (Release x64)
           prerelease: true
+          make_latest: false
           files: |
             artifacts/driver/*.sys
             OsmiumExamples-x64.zip
