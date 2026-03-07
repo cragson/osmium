@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <vector>
-#include <stdexcept>
 
 /*
  * Lightweight x86/x64 shellcode builder.
