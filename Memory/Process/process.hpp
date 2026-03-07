@@ -681,6 +681,31 @@ public:
 	[[nodiscard]] bool destroy_hook_x86( std::uintptr_t start_address );
 
 	///-------------------------------------------------------------------------------------------------
+	/// <summary>Creates an x64 detour hook inside the target process using an absolute (non-RIP-relative) jump.
+	/// The hook overwrites the first bytes at start_address with a 12-byte stub: MOV RAX, addr; JMP RAX.
+	/// The shellcode is written to an allocated RWX page, followed by the same 12-byte absolute jump back.</summary>
+	///
+	/// <param name="start_address">	The start address where the hook will be placed.</param>
+	/// <param name="size">				The number of bytes the hook should overwrite, needs to be at least 12 bytes (MOV RAX + JMP RAX).</param>
+	/// <param name="shellcode">		The shellcode of your hook which should get executed.</param>
+	///
+	/// <returns>True if it succeeds, false if it fails.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool create_hook_x64( std::uintptr_t start_address, size_t size,
+	                                    const std::vector< uint8_t >& shellcode );
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Destroys the x64 hook inside the target process by restoring the original bytes and freeing the allocated memory page.</summary>
+	///
+	/// <param name="start_address">	The start address of the hook.</param>
+	///
+	/// <returns>True if it succeeds, false if it fails.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool destroy_hook_x64( std::uintptr_t start_address );
+
+	///-------------------------------------------------------------------------------------------------
 	/// <summary>Gets size of current hooks inside the target process.</summary>
 	///
 	/// <remarks>cragson, 03/30/22.</remarks>

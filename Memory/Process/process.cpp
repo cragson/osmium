@@ -422,6 +422,180 @@ bool process::create_hook_x86( const std::uintptr_t start_address, const size_t 
 	return true;
 }
 
+bool process::create_hook_x64( const std::uintptr_t start_address, const size_t size,
+                               const std::vector< uint8_t >& shellcode )
+{
+	/*
+	 * x64 absolute (non-RIP-relative) detour hook.
+	 *
+	 * Stub written at the hook site (12 bytes):
+	 *   48 B8 <8-byte address>    MOV RAX, imm64
+	 *   FF E0                     JMP RAX
+	 *
+	 * The same 12-byte pattern is appended to the shellcode on the
+	 * allocated RWX page to jump back to original_function + size.
+	 */
+
+	constexpr size_t JMP_STUB_SIZE = 12;
+
+	if( size < JMP_STUB_SIZE || shellcode.empty() )
+		return false;
+
+	const auto alloc_size = shellcode.size() + JMP_STUB_SIZE;
+	const auto rwx_page = this->allocate_rwx_page_in_process( alloc_size > 4096 ? alloc_size : 4096 );
+
+	if( !rwx_page )
+		return false;
+
+	// write the shellcode to the allocated page
+	if( !WriteProcessMemory(
+		this->m_handle,
+		rwx_page,
+		shellcode.data(),
+		shellcode.size(),
+		nullptr
+	) )
+		return false;
+
+	// build the jump-back stub: MOV RAX, <return_addr>; JMP RAX
+	const auto return_addr = start_address + size;
+	const auto stub_offset = reinterpret_cast< std::uintptr_t >( rwx_page ) + shellcode.size();
+
+	uint8_t jmp_back_stub[JMP_STUB_SIZE] = {
+		0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0,   // MOV RAX, imm64
+		0xFF, 0xE0                               // JMP RAX
+	};
+	*reinterpret_cast< uint64_t* >( &jmp_back_stub[2] ) = return_addr;
+
+	if( !WriteProcessMemory(
+		this->m_handle,
+		reinterpret_cast< LPVOID >( stub_offset ),
+		jmp_back_stub,
+		JMP_STUB_SIZE,
+		nullptr
+	) )
+		return false;
+
+	// save original bytes before overwriting
+	std::vector< uint8_t > original_bytes( size );
+
+	if( !ReadProcessMemory(
+		this->m_handle,
+		reinterpret_cast< LPCVOID >( start_address ),
+		original_bytes.data(),
+		size,
+		nullptr
+	) )
+		return false;
+
+	// change page protection at hook site
+	DWORD old_protect = 0;
+
+	if( !VirtualProtectEx(
+		this->m_handle,
+		reinterpret_cast< LPVOID >( start_address ),
+		size,
+		PAGE_EXECUTE_READWRITE,
+		&old_protect
+	) )
+		return false;
+
+	// NOP-pad the region if hook size > stub size
+	if( size > JMP_STUB_SIZE )
+	{
+		for( size_t idx = 0; idx < size; idx++ )
+			this->write< uint8_t >( start_address + idx, 0x90 );
+	}
+
+	// build the hook stub: MOV RAX, <rwx_page>; JMP RAX
+	uint8_t hook_stub[JMP_STUB_SIZE] = {
+		0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0,   // MOV RAX, imm64
+		0xFF, 0xE0                               // JMP RAX
+	};
+	*reinterpret_cast< uint64_t* >( &hook_stub[2] ) = reinterpret_cast< uint64_t >( rwx_page );
+
+	if( !WriteProcessMemory(
+		this->m_handle,
+		reinterpret_cast< LPVOID >( start_address ),
+		hook_stub,
+		JMP_STUB_SIZE,
+		nullptr
+	) )
+		return false;
+
+	// restore original page protection
+	VirtualProtectEx(
+		this->m_handle,
+		reinterpret_cast< LPVOID >( start_address ),
+		size,
+		old_protect,
+		&old_protect
+	);
+
+	auto _hook = std::make_unique< hook >(
+		start_address,
+		reinterpret_cast< std::uintptr_t >( rwx_page ),
+		size,
+		shellcode,
+		original_bytes
+	);
+
+	this->m_hooks.push_back( std::move( _hook ) );
+
+	return true;
+}
+
+bool process::destroy_hook_x64( const std::uintptr_t start_address )
+{
+	for( const auto& hk : this->m_hooks )
+		if( hk->get_hook_address() == start_address )
+		{
+			if( hk->get_hook_size() != hk->get_original_bytes_ptr()->size() )
+				return false;
+
+			DWORD old_protect = 0;
+
+			if( !VirtualProtectEx(
+				this->m_handle,
+				reinterpret_cast< LPVOID >( start_address ),
+				hk->get_hook_size(),
+				PAGE_EXECUTE_READWRITE,
+				&old_protect
+			) )
+				return false;
+
+			if( !WriteProcessMemory(
+				this->m_handle,
+				reinterpret_cast< LPVOID >( start_address ),
+				hk->get_original_bytes_ptr()->data(),
+				hk->get_original_bytes_ptr()->size(),
+				nullptr
+			) )
+				return false;
+
+			VirtualProtectEx(
+				this->m_handle,
+				reinterpret_cast< LPVOID >( start_address ),
+				hk->get_hook_size(),
+				old_protect,
+				&old_protect
+			);
+
+			VirtualFreeEx(
+				this->m_handle,
+				reinterpret_cast< LPVOID >( hk->get_allocated_page_address() ),
+				NULL,
+				MEM_RELEASE
+			);
+
+			this->m_hooks.erase( std::ranges::find( this->m_hooks.begin(), this->m_hooks.end(), hk ) );
+
+			return true;
+		}
+
+	return false;
+}
+
 bool process::destroy_hook_x86( const std::uintptr_t start_address )
 {
 	if( start_address < 0 )
