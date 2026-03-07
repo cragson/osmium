@@ -10,7 +10,7 @@
  * Debug print macro — stripped in release builds
  * ----------------------------------------------------------------------- */
 #if DBG
-#define LOG(fmt, ...) DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "[osmium] " fmt "\n", __VA_ARGS__)
+#define LOG(fmt, ...) DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "[ndis6] " fmt "\n", __VA_ARGS__)
 #else
 #define LOG(fmt, ...) ((void)0)
 #endif
@@ -20,6 +20,7 @@
  * ----------------------------------------------------------------------- */
 static NTSTATUS DispatchCreate(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 static NTSTATUS DispatchClose(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
+static NTSTATUS DispatchPassthrough(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 static NTSTATUS DispatchDeviceControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 static VOID     DriverUnloadRoutine(IN PDRIVER_OBJECT DriverObject);
 
@@ -28,28 +29,56 @@ static VOID     DriverUnloadRoutine(IN PDRIVER_OBJECT DriverObject);
  * ----------------------------------------------------------------------- */
 static NTSTATUS DispatchCreate(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 {
+	UNICODE_STRING SymlinkName;
+
 	UNREFERENCED_PARAMETER( DeviceObject );
+
+	/* Remove symlink immediately — handle is open, no further opens needed */
+	RtlInitUnicodeString( &SymlinkName, OSMIUM_SYMLINK_PATH );
+	IoDeleteSymbolicLink( &SymlinkName );
 
 	Irp->IoStatus.Status = STATUS_SUCCESS;
 	Irp->IoStatus.Information = 0;
 	IoCompleteRequest( Irp, IO_NO_INCREMENT );
 
-	LOG( "Device opened" );
+	LOG( "Device opened, symlink removed" );
 
 	return STATUS_SUCCESS;
 }
 
 static NTSTATUS DispatchClose(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 {
+	UNICODE_STRING DeviceName;
+	UNICODE_STRING SymlinkName;
+
 	UNREFERENCED_PARAMETER( DeviceObject );
+
+	/* Recreate symlink for the next connection */
+	RtlInitUnicodeString( &DeviceName, OSMIUM_DEVICE_PATH );
+	RtlInitUnicodeString( &SymlinkName, OSMIUM_SYMLINK_PATH );
+	IoCreateSymbolicLink( &SymlinkName, &DeviceName );
 
 	Irp->IoStatus.Status = STATUS_SUCCESS;
 	Irp->IoStatus.Information = 0;
 	IoCompleteRequest( Irp, IO_NO_INCREMENT );
 
-	LOG( "Device closed" );
+	LOG( "Device closed, symlink restored" );
 
 	return STATUS_SUCCESS;
+}
+
+/* -----------------------------------------------------------------------
+ * Dispatch: Default — reject unhandled IRP major functions
+ * ----------------------------------------------------------------------- */
+static NTSTATUS DispatchPassthrough(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
+{
+	UNREFERENCED_PARAMETER( DeviceObject );
+
+	Irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
+	Irp->IoStatus.Information = 0;
+	IoCompleteRequest( Irp, IO_NO_INCREMENT );
+
+	return STATUS_NOT_SUPPORTED;
 }
 
 /* -----------------------------------------------------------------------
@@ -590,9 +619,9 @@ NTSTATUS DriverEntry(
 		DriverObject,
 		0,
 		&DeviceName,
-		FILE_DEVICE_UNKNOWN,
+		FILE_DEVICE_NETWORK,
 		FILE_DEVICE_SECURE_OPEN,
-		FALSE,
+		TRUE,
 		&DeviceObject
 	);
 
@@ -615,7 +644,7 @@ NTSTATUS DriverEntry(
 	   "unhandled IRP" signatures from driver verifier / scanners */
 	for ( i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++ )
 	{
-		DriverObject->MajorFunction[i] = DispatchCreate; /* default: succeed silently */
+		DriverObject->MajorFunction[i] = DispatchPassthrough;
 	}
 
 	DriverObject->MajorFunction[IRP_MJ_CREATE]         = DispatchCreate;
@@ -628,6 +657,16 @@ NTSTATUS DriverEntry(
 	if ( !NT_SUCCESS( Status ) )
 	{
 		LOG( "KmInitializeEprocessOffsets failed: 0x%08X", Status );
+		IoDeleteSymbolicLink( &SymlinkName );
+		IoDeleteDevice( DeviceObject );
+		return Status;
+	}
+
+	/* Resolve stealth API pointers (cached for lifetime of driver) */
+	Status = KmResolveStealthApis();
+	if ( !NT_SUCCESS( Status ) )
+	{
+		LOG( "KmResolveStealthApis failed: 0x%08X", Status );
 		IoDeleteSymbolicLink( &SymlinkName );
 		IoDeleteDevice( DeviceObject );
 		return Status;

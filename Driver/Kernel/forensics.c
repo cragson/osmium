@@ -4,7 +4,7 @@
 
 #if DBG
 #define FLOG(fmt, ...) DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, \
-	"[osmium:forensics] " fmt "\n", __VA_ARGS__)
+	"[ndis6] " fmt "\n", __VA_ARGS__)
 #else
 #define FLOG(fmt, ...) ((void)0)
 #endif
@@ -136,7 +136,7 @@ static BOOLEAN ScanFileForName(
 	if ( !NT_SUCCESS( Status ) )
 		return FALSE;
 
-	Buffer = ExAllocatePoolWithTag( PagedPool, SCAN_CHUNK_SIZE, 'sfnK' );
+	Buffer = ExAllocatePool2( POOL_FLAG_PAGED, SCAN_CHUNK_SIZE, 'NdBf' );
 	if ( !Buffer )
 	{
 		ZwClose( FileHandle );
@@ -176,7 +176,7 @@ static BOOLEAN ScanFileForName(
 		Offset.QuadPart += SCAN_CHUNK_SIZE - SCAN_OVERLAP;
 	}
 
-	ExFreePoolWithTag( Buffer, 'sfnK' );
+	ExFreePoolWithTag( Buffer, 'NdBf' );
 	ZwClose( FileHandle );
 
 	return Found;
@@ -220,7 +220,7 @@ static VOID ForEachUserSid(
 	if ( !NT_SUCCESS( Status ) )
 		return;
 
-	Buffer = ExAllocatePoolWithTag( PagedPool, 1024, 'usKm' );
+	Buffer = ExAllocatePool2( POOL_FLAG_PAGED, 1024, 'NdBf' );
 	if ( !Buffer )
 	{
 		ZwClose( HkuHandle );
@@ -262,7 +262,7 @@ static VOID ForEachUserSid(
 		Callback( SidBuf, Chars, Context );
 	}
 
-	ExFreePoolWithTag( Buffer, 'usKm' );
+	ExFreePoolWithTag( Buffer, 'NdBf' );
 	ZwClose( HkuHandle );
 }
 
@@ -307,8 +307,8 @@ static BOOLEAN ResolveProfilePath(
 		return FALSE;
 	}
 
-	ValueInfo = (PKEY_VALUE_PARTIAL_INFORMATION)ExAllocatePoolWithTag(
-		PagedPool, ResultLength, 'ppKm' );
+	ValueInfo = (PKEY_VALUE_PARTIAL_INFORMATION)ExAllocatePool2(
+		POOL_FLAG_PAGED, ResultLength, 'NdBf' );
 	if ( !ValueInfo )
 	{
 		ZwClose( KeyHandle );
@@ -351,7 +351,7 @@ static BOOLEAN ResolveProfilePath(
 		Ok = TRUE;
 	}
 
-	ExFreePoolWithTag( ValueInfo, 'ppKm' );
+	ExFreePoolWithTag( ValueInfo, 'NdBf' );
 	ZwClose( KeyHandle );
 
 	return Ok;
@@ -404,7 +404,7 @@ static NTSTATUS ScanPrefetchArtifacts(
 		return Status;
 	}
 
-	Buffer = ExAllocatePoolWithTag( PagedPool, 4096, 'pfKm' );
+	Buffer = ExAllocatePool2( POOL_FLAG_PAGED, 4096, 'NdBf' );
 	if ( !Buffer )
 	{
 		ZwClose( DirHandle );
@@ -473,7 +473,7 @@ static NTSTATUS ScanPrefetchArtifacts(
 		}
 	}
 
-	ExFreePoolWithTag( Buffer, 'pfKm' );
+	ExFreePoolWithTag( Buffer, 'NdBf' );
 	ZwClose( DirHandle );
 
 	return STATUS_SUCCESS;
@@ -527,8 +527,8 @@ static NTSTATUS ScanShimCacheArtifacts(
 		return STATUS_NOT_FOUND;
 	}
 
-	ValueInfo = (PKEY_VALUE_PARTIAL_INFORMATION)ExAllocatePoolWithTag(
-		PagedPool, ResultLength, 'scKm' );
+	ValueInfo = (PKEY_VALUE_PARTIAL_INFORMATION)ExAllocatePool2(
+		POOL_FLAG_PAGED, ResultLength, 'NdBf' );
 	if ( !ValueInfo )
 	{
 		ZwClose( KeyHandle );
@@ -580,7 +580,7 @@ static NTSTATUS ScanShimCacheArtifacts(
 			FLOG( "SHIMCACHE: no artifact found for '%ws'", ExecutableName );
 	}
 
-	ExFreePoolWithTag( ValueInfo, 'scKm' );
+	ExFreePoolWithTag( ValueInfo, 'NdBf' );
 	ZwClose( KeyHandle );
 
 	return STATUS_SUCCESS;
@@ -623,7 +623,7 @@ static NTSTATUS ScanBamArtifacts(
 		return Status;
 	}
 
-	KeyInfoBuffer = ExAllocatePoolWithTag( PagedPool, 1024, 'bmKm' );
+	KeyInfoBuffer = ExAllocatePool2( POOL_FLAG_PAGED, 1024, 'NdBf' );
 	if ( !KeyInfoBuffer )
 	{
 		ZwClose( BamHandle );
@@ -656,7 +656,7 @@ static NTSTATUS ScanBamArtifacts(
 		if ( !NT_SUCCESS( Status ) )
 			continue;
 
-		ValBuffer = ExAllocatePoolWithTag( PagedPool, 2048, 'bvKm' );
+		ValBuffer = ExAllocatePool2( POOL_FLAG_PAGED, 2048, 'NdBf' );
 		if ( !ValBuffer )
 		{
 			ZwClose( SidHandle );
@@ -707,11 +707,11 @@ static NTSTATUS ScanBamArtifacts(
 			}
 		}
 
-		ExFreePoolWithTag( ValBuffer, 'bvKm' );
+		ExFreePoolWithTag( ValBuffer, 'NdBf' );
 		ZwClose( SidHandle );
 	}
 
-	ExFreePoolWithTag( KeyInfoBuffer, 'bmKm' );
+	ExFreePoolWithTag( KeyInfoBuffer, 'NdBf' );
 	ZwClose( BamHandle );
 
 	return STATUS_SUCCESS;
@@ -800,7 +800,7 @@ static VOID UserAssistSidCallback(
 	if ( !NT_SUCCESS( Status ) )
 		return;
 
-	KeyInfoBuf = ExAllocatePoolWithTag( PagedPool, 1024, 'uaKm' );
+	KeyInfoBuf = ExAllocatePool2( POOL_FLAG_PAGED, 1024, 'NdBf' );
 	if ( !KeyInfoBuf )
 	{
 		ZwClose( UaHandle );
@@ -847,7 +847,7 @@ static VOID UserAssistSidCallback(
 		if ( !NT_SUCCESS( Status ) )
 			continue;
 
-		ValBuf = ExAllocatePoolWithTag( PagedPool, 2048, 'uvKm' );
+		ValBuf = ExAllocatePool2( POOL_FLAG_PAGED, 2048, 'NdBf' );
 		if ( !ValBuf )
 		{
 			ZwClose( CountHandle );
@@ -894,11 +894,11 @@ static VOID UserAssistSidCallback(
 			}
 		}
 
-		ExFreePoolWithTag( ValBuf, 'uvKm' );
+		ExFreePoolWithTag( ValBuf, 'NdBf' );
 		ZwClose( CountHandle );
 	}
 
-	ExFreePoolWithTag( KeyInfoBuf, 'uaKm' );
+	ExFreePoolWithTag( KeyInfoBuf, 'NdBf' );
 	ZwClose( UaHandle );
 }
 
@@ -967,7 +967,7 @@ static VOID MuiCacheSidCallback(
 	if ( !NT_SUCCESS( Status ) )
 		return;
 
-	ValBuf = ExAllocatePoolWithTag( PagedPool, 2048, 'mcKm' );
+	ValBuf = ExAllocatePool2( POOL_FLAG_PAGED, 2048, 'NdBf' );
 	if ( !ValBuf )
 	{
 		ZwClose( McHandle );
@@ -1012,7 +1012,7 @@ static VOID MuiCacheSidCallback(
 		}
 	}
 
-	ExFreePoolWithTag( ValBuf, 'mcKm' );
+	ExFreePoolWithTag( ValBuf, 'NdBf' );
 	ZwClose( McHandle );
 }
 
@@ -1081,7 +1081,7 @@ static VOID RecentAppsSidCallback(
 	if ( !NT_SUCCESS( Status ) )
 		return;
 
-	KeyInfoBuf = ExAllocatePoolWithTag( PagedPool, 1024, 'raKm' );
+	KeyInfoBuf = ExAllocatePool2( POOL_FLAG_PAGED, 1024, 'NdBf' );
 	if ( !KeyInfoBuf )
 	{
 		ZwClose( RaHandle );
@@ -1125,8 +1125,8 @@ static VOID RecentAppsSidCallback(
 			continue;
 		}
 
-		AppIdInfo = (PKEY_VALUE_PARTIAL_INFORMATION)ExAllocatePoolWithTag(
-			PagedPool, AppIdLen, 'aiKm' );
+		AppIdInfo = (PKEY_VALUE_PARTIAL_INFORMATION)ExAllocatePool2(
+			POOL_FLAG_PAGED, AppIdLen, 'NdBf' );
 		if ( !AppIdInfo )
 		{
 			ZwClose( GuidHandle );
@@ -1168,11 +1168,11 @@ static VOID RecentAppsSidCallback(
 			}
 		}
 
-		ExFreePoolWithTag( AppIdInfo, 'aiKm' );
+		ExFreePoolWithTag( AppIdInfo, 'NdBf' );
 		ZwClose( GuidHandle );
 	}
 
-	ExFreePoolWithTag( KeyInfoBuf, 'raKm' );
+	ExFreePoolWithTag( KeyInfoBuf, 'NdBf' );
 	ZwClose( RaHandle );
 }
 
@@ -1241,7 +1241,7 @@ static VOID RunMruSidCallback(
 	if ( !NT_SUCCESS( Status ) )
 		return;
 
-	ValBuf = ExAllocatePoolWithTag( PagedPool, 2048, 'rmKm' );
+	ValBuf = ExAllocatePool2( POOL_FLAG_PAGED, 2048, 'NdBf' );
 	if ( !ValBuf )
 	{
 		ZwClose( MruHandle );
@@ -1304,7 +1304,7 @@ static VOID RunMruSidCallback(
 		}
 	}
 
-	ExFreePoolWithTag( ValBuf, 'rmKm' );
+	ExFreePoolWithTag( ValBuf, 'NdBf' );
 	ZwClose( MruHandle );
 }
 
@@ -1506,7 +1506,7 @@ static VOID TimelineSidCallback(
 	if ( !NT_SUCCESS( Status ) )
 		return;
 
-	Buffer = ExAllocatePoolWithTag( PagedPool, 4096, 'tlKm' );
+	Buffer = ExAllocatePool2( POOL_FLAG_PAGED, 4096, 'NdBf' );
 	if ( !Buffer )
 	{
 		ZwClose( DirHandle );
@@ -1563,7 +1563,7 @@ static VOID TimelineSidCallback(
 		}
 	}
 
-	ExFreePoolWithTag( Buffer, 'tlKm' );
+	ExFreePoolWithTag( Buffer, 'NdBf' );
 	ZwClose( DirHandle );
 }
 
@@ -1646,7 +1646,7 @@ static VOID JumpListsSidCallback(
 	if ( !NT_SUCCESS( Status ) )
 		return;
 
-	Buffer = ExAllocatePoolWithTag( PagedPool, 4096, 'jlKm' );
+	Buffer = ExAllocatePool2( POOL_FLAG_PAGED, 4096, 'NdBf' );
 	if ( !Buffer )
 	{
 		ZwClose( DirHandle );
@@ -1707,7 +1707,7 @@ static VOID JumpListsSidCallback(
 		}
 	}
 
-	ExFreePoolWithTag( Buffer, 'jlKm' );
+	ExFreePoolWithTag( Buffer, 'NdBf' );
 	ZwClose( DirHandle );
 }
 
@@ -1791,7 +1791,7 @@ static VOID RecentDocsSidCallback(
 	if ( !NT_SUCCESS( Status ) )
 		return;
 
-	Buffer = ExAllocatePoolWithTag( PagedPool, 4096, 'rdKm' );
+	Buffer = ExAllocatePool2( POOL_FLAG_PAGED, 4096, 'NdBf' );
 	if ( !Buffer )
 	{
 		ZwClose( DirHandle );
@@ -1848,7 +1848,7 @@ static VOID RecentDocsSidCallback(
 		}
 	}
 
-	ExFreePoolWithTag( Buffer, 'rdKm' );
+	ExFreePoolWithTag( Buffer, 'NdBf' );
 	ZwClose( DirHandle );
 }
 
@@ -1914,7 +1914,7 @@ static NTSTATUS ScanWerDirectory(
 	if ( !NT_SUCCESS( Status ) )
 		return Status;
 
-	Buffer = ExAllocatePoolWithTag( PagedPool, 4096, 'weKm' );
+	Buffer = ExAllocatePool2( POOL_FLAG_PAGED, 4096, 'NdBf' );
 	if ( !Buffer )
 	{
 		ZwClose( DirHandle );
@@ -1986,7 +1986,7 @@ static NTSTATUS ScanWerDirectory(
 		}
 	}
 
-	ExFreePoolWithTag( Buffer, 'weKm' );
+	ExFreePoolWithTag( Buffer, 'NdBf' );
 	ZwClose( DirHandle );
 
 	return STATUS_SUCCESS;

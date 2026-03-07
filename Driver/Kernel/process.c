@@ -90,7 +90,15 @@ static NTSTATUS KmGetModuleBaseByName64(
 
 			if ( Entry.BaseDllName.Buffer && Entry.BaseDllName.Length > 0 )
 			{
-				if ( _wcsicmp( Entry.BaseDllName.Buffer, ModuleName ) == 0 )
+				WCHAR NameBuffer[260];
+				USHORT CopyLen = Entry.BaseDllName.Length;
+				if ( CopyLen > sizeof( NameBuffer ) - sizeof( WCHAR ) )
+					CopyLen = sizeof( NameBuffer ) - sizeof( WCHAR );
+
+				RtlZeroMemory( NameBuffer, sizeof( NameBuffer ) );
+				RtlCopyMemory( NameBuffer, Entry.BaseDllName.Buffer, CopyLen );
+
+				if ( _wcsicmp( NameBuffer, ModuleName ) == 0 )
 				{
 					*BaseAddress = (ULONG64)(ULONG_PTR)Entry.DllBase;
 					*ModuleSize  = (ULONG64)Entry.SizeOfImage;

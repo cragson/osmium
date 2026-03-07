@@ -2,8 +2,8 @@
 #include "ntstructs.h"
 
 /* Generic pool tags */
-#define POOL_TAG_READ  'RdmK'
-#define POOL_TAG_WRITE 'WrmK'
+#define POOL_TAG_READ  'NdRx'
+#define POOL_TAG_WRITE 'NdTx'
 
 /*
  * KmReadProcessMemory
@@ -31,7 +31,7 @@ NTSTATUS KmReadProcessMemory(
 	if ( BytesCopied )
 		*BytesCopied = 0;
 
-	KernelBuffer = ExAllocatePoolWithTag( NonPagedPool, Size, POOL_TAG_READ );
+	KernelBuffer = ExAllocatePool2( POOL_FLAG_NON_PAGED, Size, POOL_TAG_READ );
 	if ( !KernelBuffer )
 		return STATUS_INSUFFICIENT_RESOURCES;
 
@@ -198,7 +198,7 @@ NTSTATUS KmWriteProcessMemory(
 	if ( BytesCopied )
 		*BytesCopied = 0;
 
-	KernelBuffer = ExAllocatePoolWithTag( NonPagedPool, Size, POOL_TAG_WRITE );
+	KernelBuffer = ExAllocatePool2( POOL_FLAG_NON_PAGED, Size, POOL_TAG_WRITE );
 	if ( !KernelBuffer )
 		return STATUS_INSUFFICIENT_RESOURCES;
 

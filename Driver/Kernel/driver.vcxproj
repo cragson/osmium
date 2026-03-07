@@ -22,8 +22,8 @@
 
   <PropertyGroup Label="Globals">
     <ProjectGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
-    <RootNamespace>OsmiumDriver</RootNamespace>
-    <ProjectName>OsmiumDriver</ProjectName>
+    <RootNamespace>wfpndis6</RootNamespace>
+    <ProjectName>wfpndis6</ProjectName>
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

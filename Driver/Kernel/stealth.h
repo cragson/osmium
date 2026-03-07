@@ -12,6 +12,8 @@
  * KmStripProcessHandles:      Closes handles to a process held by other processes.
  */
 
+NTSTATUS KmResolveStealthApis( VOID );
+
 NTSTATUS KmHideProcessThreads(
 	IN  HANDLE  ProcessId,
 	OUT PULONG  ThreadsHidden
