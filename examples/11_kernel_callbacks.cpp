@@ -20,7 +20,7 @@ Usage:
   {0} --help                             Show this help
 
 Arguments:
-  type            Callback type: process, thread, or image
+  type            Callback type: process, thread, image, or registry
   --remove-all    Remove all callbacks of the given type
   --remove-index  Remove a single callback at the given array index
 
@@ -33,9 +33,10 @@ Examples:
 
 static std::optional< ULONG > parse_type( std::string_view s )
 {
-	if( s == "process" ) return CALLBACK_TYPE_PROCESS;
-	if( s == "thread" )  return CALLBACK_TYPE_THREAD;
-	if( s == "image" )   return CALLBACK_TYPE_IMAGE;
+	if( s == "process" )  return CALLBACK_TYPE_PROCESS;
+	if( s == "thread" )   return CALLBACK_TYPE_THREAD;
+	if( s == "image" )    return CALLBACK_TYPE_IMAGE;
+	if( s == "registry" ) return CALLBACK_TYPE_REGISTRY;
 	return std::nullopt;
 }
 
@@ -43,9 +44,10 @@ static std::string_view type_name( ULONG t )
 {
 	switch( t )
 	{
-	case CALLBACK_TYPE_PROCESS: return "process";
-	case CALLBACK_TYPE_THREAD:  return "thread";
-	case CALLBACK_TYPE_IMAGE:   return "image";
+	case CALLBACK_TYPE_PROCESS:  return "process";
+	case CALLBACK_TYPE_THREAD:   return "thread";
+	case CALLBACK_TYPE_IMAGE:    return "image";
+	case CALLBACK_TYPE_REGISTRY: return "registry";
 	default: return "unknown";
 	}
 }
@@ -62,7 +64,7 @@ int main( int argc, char* argv[] )
 
 	if( !cb_type )
 	{
-		std::println( "[!] Unknown callback type '{}'. Use: process, thread, or image.", argv[1] );
+		std::println( "[!] Unknown callback type '{}'. Use: process, thread, image, or registry.", argv[1] );
 		return 1;
 	}
 

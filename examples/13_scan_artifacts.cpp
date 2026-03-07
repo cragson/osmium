@@ -1,4 +1,3 @@
-#include <cstdio>
 #include <print>
 #include <memory>
 #include <string>
