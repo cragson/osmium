@@ -48,6 +48,8 @@
         -   [How to allocate a memory page inside of the target process with specific rights](#how-to-allocate-a-memory-page-inside-of-the-target-process-with-specific-rights)
         -   [How to create a x86 hook](#how-to-create-a-x86-hook)
         -   [How to destroy a x86 hook](#how-to-destroy-a-x86-hook)
+        -   [How to create a x64 hook](#how-to-create-a-x64-hook)
+        -   [How to destroy a x64 hook](#how-to-destroy-a-x64-hook)
         -   [How to inject a DLL with LoadLibrary](#how-to-inject-a-dll-with-loadlibrary)
 		-	[How to get a pointer to the DOS header of an image](#how-to-get-a-pointer-to-the-dos-header-of-an-image)
         -   [How to get a pointer to the NT headers of an image](#how-to-get-a-pointer-to-the-nt-headers-of-an-image)
@@ -875,6 +877,57 @@ The framework contains the following modules:
                 printf( "[!] MAYDAY MAYDAY error hello hi hallo holla bonjour!\n" );
         }
         ```
+    - ### **How to create a x64 hook**
+        Same concept as the x86 hook but uses a 12-byte absolute jump stub instead of a 5-byte relative jump. The stub is `MOV RAX, <address>; JMP RAX` (`48 B8 <8 bytes> FF E0`) — it is **not RIP-relative**, so it works across the full 64-bit address space without range limitations.
+
+        The minimum hook size is **12 bytes** (you need to overwrite at least that many bytes at the hook site).
+
+        ```cpp
+        void hook_x64_example()
+        {
+            const auto proc = std::make_unique< process >();
+
+            if( !proc->setup_process( L"target_x64.exe" ) )
+                return;
+
+            const auto base = proc->get_image_base( L"target_x64.exe" );
+
+            if( !base )
+                return;
+
+            // shellcode: increment a counter at [rbx] and preserve registers
+            std::vector< uint8_t > shellcode = {
+                0x50,                                     // push rax
+                0xFF, 0x03,                               // inc dword ptr [rbx]
+                0x58                                      // pop rax
+            };
+
+            const std::uintptr_t target_func = base + 0xDEAD;
+            const size_t hook_size = 14;   // must be >= 12, pad to next instruction boundary
+
+            if( proc->create_hook_x64( target_func, hook_size, shellcode ) )
+                printf( "[+] x64 hook installed!\n" );
+        }
+        ```
+
+    - ### **How to destroy a x64 hook**
+        Works exactly like the x86 variant — restores the original bytes and frees the allocated RWX page.
+
+        ```cpp
+        void unhook_x64_example()
+        {
+            const auto base = g_pProcess->get_image_base( L"target_x64.exe" );
+
+            if( !base )
+                return;
+
+            const std::uintptr_t target_func = base + 0xDEAD;
+
+            if( g_pProcess->destroy_hook_x64( target_func ) )
+                printf( "[+] x64 hook removed!\n" );
+        }
+        ```
+
     - ### **How to inject a DLL with LoadLibrary**
         Just provide a valid path of the dll, which you want to inject into the target process, to the function `inject_dll_load_library`.
 
