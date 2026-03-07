@@ -138,12 +138,36 @@ NTSTATUS KmHideProcessThreads(
 #define MAX_NOTIFY_CALLBACKS 64
 
 /*
- * ScanForLeaTarget
+ * ValidateCallbackArray
  *
- * Scans a function body for the first LEA REG, [RIP+disp32] instruction
- * and returns the effective address. On x64, the encoding is:
- *   REX.W (48/4C) + 8D + ModRM(mod=00, rm=101) + disp32
+ * Heuristic: a real callback array has at least one slot in the first 8
+ * entries whose EX_FAST_REF-masked value is a valid kernel pointer.
+ * This distinguishes the array from scalar globals (counts, locks) that
+ * the LEA scan may hit first.
  */
+static BOOLEAN ValidateCallbackArray( PVOID Candidate )
+{
+	ULONG j;
+
+	__try
+	{
+		for ( j = 0; j < 8; j++ )
+		{
+			ULONG64 Slot   = ( (PULONG64)Candidate )[j];
+			ULONG64 Masked = Slot & ~(ULONG64)0xF;
+
+			if ( Masked > 0xFFFF800000000000ULL )
+				return TRUE;
+		}
+	}
+	__except ( EXCEPTION_EXECUTE_HANDLER )
+	{
+		return FALSE;
+	}
+
+	return FALSE;
+}
+
 static PVOID ScanForLeaTarget( PUCHAR Start, ULONG Length )
 {
 	ULONG i;
@@ -161,8 +185,9 @@ static PVOID ScanForLeaTarget( PUCHAR Start, ULONG Length )
 			INT32 Disp = *(PINT32)( &Start[i + 3] );
 			PVOID Target = (PVOID)( &Start[i + 7] + Disp );
 
-			/* Sanity: target should be in kernel space */
-			if ( (ULONG_PTR)Target > 0xFFFF800000000000ULL )
+			/* Must be in kernel space and look like a callback array */
+			if ( (ULONG_PTR)Target > 0xFFFF800000000000ULL &&
+				 ValidateCallbackArray( Target ) )
 				return Target;
 		}
 	}
@@ -255,29 +280,40 @@ NTSTATUS KmEnumerateNotifyCallbacks(
 	if ( !Array )
 		return STATUS_NOT_FOUND;
 
-	for ( i = 0; i < MAX_NOTIFY_CALLBACKS && Count < MaxEntries; i++ )
+	__try
 	{
-		ULONG64 RawEntry = ( (PULONG64)Array )[i];
-
-		/* Clear EX_FAST_REF low bits */
-		ULONG64 Block = RawEntry & ~(ULONG64)0xF;
-
-		if ( Block != 0 )
+		for ( i = 0; i < MAX_NOTIFY_CALLBACKS && Count < MaxEntries; i++ )
 		{
-			/*
-			 * EX_CALLBACK_ROUTINE_BLOCK layout:
-			 *   +0x00  EX_RUNDOWN_REF RundownProtect
-			 *   +0x08  PVOID          Function
-			 *   +0x10  PVOID          Context
-			 *
-			 * The callback function pointer is at offset 0x08.
-			 */
-			PVOID CallbackFunc = *(PVOID*)( (PUCHAR)Block + 0x08 );
+			ULONG64 RawEntry = ( (PULONG64)Array )[i];
 
-			Entries[Count].Index   = i;
-			Entries[Count].Address = (ULONG64)(ULONG_PTR)CallbackFunc;
-			Count++;
+			/* Clear EX_FAST_REF low bits */
+			ULONG64 Block = RawEntry & ~(ULONG64)0xF;
+
+			/* Validate Block is a kernel-mode pointer before dereferencing */
+			if ( Block > 0xFFFF800000000000ULL )
+			{
+				/*
+				 * EX_CALLBACK_ROUTINE_BLOCK layout:
+				 *   +0x00  EX_RUNDOWN_REF RundownProtect
+				 *   +0x08  PVOID          Function
+				 *   +0x10  PVOID          Context
+				 *
+				 * The callback function pointer is at offset 0x08.
+				 */
+				PVOID CallbackFunc = *(PVOID*)( (PUCHAR)Block + 0x08 );
+
+				if ( (ULONG_PTR)CallbackFunc > 0xFFFF800000000000ULL )
+				{
+					Entries[Count].Index   = i;
+					Entries[Count].Address = (ULONG64)(ULONG_PTR)CallbackFunc;
+					Count++;
+				}
+			}
 		}
+	}
+	__except ( EXCEPTION_EXECUTE_HANDLER )
+	{
+		/* If we faulted mid-enumeration, return what we found so far */
 	}
 
 	*ReturnedEntries = Count;

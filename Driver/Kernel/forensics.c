@@ -720,9 +720,8 @@ static NTSTATUS ScanBamArtifacts(
 /* -----------------------------------------------------------------------
  * AmCache scanning
  *
- * The AmCache is a registry hive at Amcache.hve. Full parsing from
- * kernel mode is non-trivial. We report the hive's presence and size
- * as an indicator that execution records likely exist.
+ * Scans the Amcache.hve binary hive for the executable name as a
+ * Unicode substring, using the generic ScanFileForName helper.
  * ----------------------------------------------------------------------- */
 static NTSTATUS ScanAmCacheArtifacts(
 	IN     PCWSTR          ExecutableName,
@@ -731,68 +730,27 @@ static NTSTATUS ScanAmCacheArtifacts(
 	IN OUT PULONG          Count
 )
 {
-	UNICODE_STRING             FilePath;
-	OBJECT_ATTRIBUTES          ObjAttr;
-	HANDLE                     FileHandle = NULL;
-	IO_STATUS_BLOCK            IoStatus;
-	NTSTATUS                   Status;
-	FILE_STANDARD_INFORMATION  FileInfo;
+	ULONG NameLen;
 
 	if ( *Count >= MaxEntries )
 		return STATUS_SUCCESS;
 
-	RtlInitUnicodeString( &FilePath,
-		L"\\??\\C:\\Windows\\appcompat\\Programs\\Amcache.hve" );
-	InitializeObjectAttributes( &ObjAttr, &FilePath,
-		OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL );
+	NameLen = (ULONG)wcslen( ExecutableName );
 
-	Status = ZwCreateFile(
-		&FileHandle,
-		FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-		&ObjAttr,
-		&IoStatus,
-		NULL,
-		FILE_ATTRIBUTE_NORMAL,
-		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-		FILE_OPEN,
-		FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE,
-		NULL, 0
-	);
-
-	if ( !NT_SUCCESS( Status ) )
+	if ( ScanFileForName(
+		L"\\??\\C:\\Windows\\appcompat\\Programs\\Amcache.hve",
+		ExecutableName, NameLen ) )
 	{
-		FLOG( "Amcache.hve not accessible: 0x%08X", Status );
-		return Status;
-	}
-
-	Status = ZwQueryInformationFile( FileHandle, &IoStatus, &FileInfo,
-		sizeof( FileInfo ), FileStandardInformation );
-
-	if ( NT_SUCCESS( Status ) )
-	{
-		FLOG( "AMCACHE hive present: Amcache.hve (%I64d bytes)"
-			" — likely contains execution records for '%ws'",
-			FileInfo.EndOfFile.QuadPart, ExecutableName );
+		FLOG( "AMCACHE artifact: Amcache.hve contains '%ws'", ExecutableName );
 
 		Entries[*Count].Type = ARTIFACT_TYPE_AMCACHE;
-		RtlStringCchPrintfW(
-			Entries[*Count].Path,
-			MAX_ARTIFACT_PATH,
-			L"C:\\Windows\\appcompat\\Programs\\Amcache.hve (%I64d bytes)",
-			FileInfo.EndOfFile.QuadPart
+		RtlStringCchCopyW(
+			Entries[*Count].Path, MAX_ARTIFACT_PATH,
+			L"C:\\Windows\\appcompat\\Programs\\Amcache.hve"
 		);
-
-		/* Clearing AmCache from kernel is complex:
-		 * — The hive is loaded by the system and locked.
-		 * — Would require: ZwUnloadKey, modify offline, ZwLoadKey.
-		 * — Or: delete specific subkeys if hive is accessible via
-		 *   \Registry\Machine\... (requires knowing the mount point).
-		 */
 
 		( *Count )++;
 	}
-
-	ZwClose( FileHandle );
 
 	return STATUS_SUCCESS;
 }
