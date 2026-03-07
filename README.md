@@ -71,6 +71,9 @@
             - [How to check if a registercontext is active or not](#how-to-check-if-a-registercontext-is-active-or-not)
             - [How to retrieve a pointer to a registercontext with the dumped address](#how-to-retrieve-a-pointer-to-a-registercontext-with-the-dumped-address)
             - [How to access the registers data from the registercontext](#how-to-access-the-registers-data-from-the-registercontext)
+    - [**Shellcode builder**](#shellcode-builder)
+        -   [How to build x86 shellcode](#how-to-build-x86-shellcode)
+        -   [How to build x64 shellcode](#how-to-build-x64-shellcode)
     - [**Basic overlay implementation**](#basic-overlay-implementation)
         -   [How to setup your overlay](#how-to-setup-your-overlay)
         -   [How to draw a string](#how-to-draw-a-string)
@@ -1371,6 +1374,61 @@ The framework contains the following modules:
     Which would result in something like this:
 
     ![regdumper-regdata](res/regdumper-regdata.png)
+
+- ### **Shellcode builder**
+    Header-only shellcode builder (`Memory/ShellcodeBuilder/shellcode_builder.hpp`) that generates x86 and x64 machine code using a fluent API. No external dependencies — all instruction encoding is handled inline, so capstone/keystone are not needed.
+
+    Supported instructions: `push_reg`, `pop_reg`, `mov_reg_imm`, `mov_reg_reg`, `mov_mem_reg`, `mov_reg_mem`, `xor_reg_reg`, `add_reg_imm`, `sub_reg_imm`, `call_reg`, `jmp_reg`, `call_rel`, `jmp_rel`, `nop`, `int3`, `ret`, `push_imm` (x86), `pushad`/`popad` (x86), `pushfd`/`popfd` (x86), `lea_rip` (x64), `sub_rsp_imm8`/`add_rsp_imm8` (x64), and `raw` byte emission.
+
+    - ### **How to build x86 shellcode**
+        Use `shellcode::x86` with the x86 register enum (`shellcode::EAX`, `shellcode::ECX`, etc.). Chain calls and finish with `.build()` to get a `std::vector<uint8_t>`.
+
+        ```cpp
+        #include "osmium/Memory/ShellcodeBuilder/shellcode_builder.hpp"
+
+        void x86_shellcode_example()
+        {
+            // Build shellcode that calls a function at 0xDEADBEEF with an argument
+            auto code = shellcode::x86()
+                .pushad()                                   // save all registers
+                .pushfd()                                   // save flags
+                .push_imm( 0x42 )                           // push argument
+                .mov_reg_imm( shellcode::EAX, 0xDEADBEEF ) // mov eax, <func_addr>
+                .call_reg( shellcode::EAX )                 // call eax
+                .add_reg_imm( shellcode::ESP, 4 )           // clean up stack
+                .popfd()                                    // restore flags
+                .popad()                                    // restore registers
+                .ret()
+                .build();
+
+            // code is now a std::vector<uint8_t> ready for WriteProcessMemory
+            printf( "[+] Generated %llu bytes of x86 shellcode\n", code.size() );
+        }
+        ```
+
+    - ### **How to build x64 shellcode**
+        Use `shellcode::x64` with the x64 register enum (`shellcode::RAX`, `shellcode::R8`, etc.). REX prefixes for R8-R15 are emitted automatically.
+
+        ```cpp
+        #include "osmium/Memory/ShellcodeBuilder/shellcode_builder.hpp"
+
+        void x64_shellcode_example()
+        {
+            // Build shellcode that calls a function pointer with x64 calling convention
+            auto code = shellcode::x64()
+                .push_reg( shellcode::RBX )                          // preserve rbx
+                .sub_rsp_imm8( 0x28 )                                // shadow space (32 bytes + alignment)
+                .mov_reg_imm( shellcode::RCX, 0x1337 )              // first arg
+                .mov_reg_imm( shellcode::RAX, 0x00007FF600001000 )  // function address
+                .call_reg( shellcode::RAX )                          // call rax
+                .add_rsp_imm8( 0x28 )                                // restore stack
+                .pop_reg( shellcode::RBX )                           // restore rbx
+                .ret()
+                .build();
+
+            printf( "[+] Generated %llu bytes of x64 shellcode\n", code.size() );
+        }
+        ```
 
 - ### **Basic overlay implementation**
     - ### **How to setup your overlay**
