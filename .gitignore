@@ -1,1 +1,5 @@
+# Project-local config
+.claude/
+CLAUDE.md
+
 .vs/
