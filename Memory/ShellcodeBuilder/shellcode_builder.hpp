@@ -37,6 +37,19 @@ namespace shellcode
         R8, R9, R10, R11, R12, R13, R14, R15
     };
 
+    /* XMM registers for x86 SSE (XMM0-XMM7) */
+    enum class xmm32 : uint8_t
+    {
+        XMM0 = 0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7
+    };
+
+    /* XMM registers for x64 SSE (XMM0-XMM15) */
+    enum class xmm64 : uint8_t
+    {
+        XMM0 = 0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+        XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15
+    };
+
     /* Helper to extract the numeric index from a scoped register enum */
     template< typename R >
     static constexpr uint8_t reg_index( R r ) noexcept
@@ -79,6 +92,29 @@ namespace shellcode
             m_buf.push_back( static_cast< uint8_t >( v >> 8 ) );
             m_buf.push_back( static_cast< uint8_t >( v >> 16 ) );
             m_buf.push_back( static_cast< uint8_t >( v >> 24 ) );
+        }
+
+        /* Emit ModRM + optional SIB/disp for indirect [base] addressing.
+         * Handles the EBP/RBP (mod=1 disp8=0) and ESP/RSP (SIB 0x24) special cases.
+         * reg_field is the /r or register field (bits 5:3 of ModRM). */
+        void emit_modrm_indirect( uint8_t reg_field, uint8_t base )
+        {
+            if( ( base & 7 ) == 5 )
+            {
+                /* EBP/RBP/R13: mod=0 rm=5 encodes [disp32]/[RIP+disp32], use mod=1 disp8=0 */
+                m_buf.push_back( modrm( 1, reg_field & 7, base & 7 ) );
+                m_buf.push_back( 0x00 );
+            }
+            else if( ( base & 7 ) == 4 )
+            {
+                /* ESP/RSP/R12: mod=0 rm=4 encodes SIB follows, emit SIB 0x24 */
+                m_buf.push_back( modrm( 0, reg_field & 7, base & 7 ) );
+                m_buf.push_back( 0x24 );
+            }
+            else
+            {
+                m_buf.push_back( modrm( 0, reg_field & 7, base & 7 ) );
+            }
         }
 
         /* Resolve all label fixups in the given buffer */
@@ -401,50 +437,16 @@ namespace shellcode
         /* MOV [reg32], reg32 — store to memory pointed by register */
         x86& mov_mem_reg( reg32 base, reg32 src )
         {
-            auto const bi = reg_index( base );
-            auto const si = reg_index( src );
             this->m_buf.push_back( 0x89 );
-            if( ( bi & 7 ) == 5 )
-            {
-                /* EBP: mod=0 rm=5 encodes [disp32], use mod=1 disp8=0 instead */
-                this->m_buf.push_back( this->modrm( 1, si, bi ) );
-                this->m_buf.push_back( 0x00 );
-            }
-            else if( ( bi & 7 ) == 4 )
-            {
-                /* ESP: mod=0 rm=4 encodes SIB follows, emit SIB 0x24 */
-                this->m_buf.push_back( this->modrm( 0, si, bi ) );
-                this->m_buf.push_back( 0x24 );
-            }
-            else
-            {
-                this->m_buf.push_back( this->modrm( 0, si, bi ) );
-            }
+            this->emit_modrm_indirect( reg_index( src ), reg_index( base ) );
             return *this;
         }
 
         /* MOV reg32, [reg32] — load from memory pointed by register */
         x86& mov_reg_mem( reg32 dst, reg32 base )
         {
-            auto const di = reg_index( dst );
-            auto const bi = reg_index( base );
             this->m_buf.push_back( 0x8B );
-            if( ( bi & 7 ) == 5 )
-            {
-                /* EBP: mod=0 rm=5 encodes [disp32], use mod=1 disp8=0 instead */
-                this->m_buf.push_back( this->modrm( 1, di, bi ) );
-                this->m_buf.push_back( 0x00 );
-            }
-            else if( ( bi & 7 ) == 4 )
-            {
-                /* ESP: mod=0 rm=4 encodes SIB follows, emit SIB 0x24 */
-                this->m_buf.push_back( this->modrm( 0, di, bi ) );
-                this->m_buf.push_back( 0x24 );
-            }
-            else
-            {
-                this->m_buf.push_back( this->modrm( 0, di, bi ) );
-            }
+            this->emit_modrm_indirect( reg_index( dst ), reg_index( base ) );
             return *this;
         }
 
@@ -511,6 +513,592 @@ namespace shellcode
         {
             this->m_buf.push_back( 0xCD );
             this->m_buf.push_back( 0x2E );
+            return *this;
+        }
+
+        /* ------- Arithmetic / logic instructions ------- */
+
+        /* AND reg32, reg32 */
+        x86& and_reg_reg( reg32 dst, reg32 src )
+        {
+            this->m_buf.push_back( 0x21 );
+            this->m_buf.push_back( this->modrm( 3, reg_index( src ), reg_index( dst ) ) );
+            return *this;
+        }
+
+        /* AND reg32, imm32 */
+        x86& and_reg_imm( reg32 r, uint32_t imm )
+        {
+            auto const ri = reg_index( r );
+            if( imm <= 0x7F )
+            {
+                this->m_buf.push_back( 0x83 );
+                this->m_buf.push_back( this->modrm( 3, 4, ri ) );
+                this->m_buf.push_back( static_cast< uint8_t >( imm ) );
+            }
+            else
+            {
+                if( r == reg32::EAX )
+                {
+                    this->m_buf.push_back( 0x25 );
+                }
+                else
+                {
+                    this->m_buf.push_back( 0x81 );
+                    this->m_buf.push_back( this->modrm( 3, 4, ri ) );
+                }
+                this->push_le32( imm );
+            }
+            return *this;
+        }
+
+        /* OR reg32, reg32 */
+        x86& or_reg_reg( reg32 dst, reg32 src )
+        {
+            this->m_buf.push_back( 0x09 );
+            this->m_buf.push_back( this->modrm( 3, reg_index( src ), reg_index( dst ) ) );
+            return *this;
+        }
+
+        /* OR reg32, imm32 */
+        x86& or_reg_imm( reg32 r, uint32_t imm )
+        {
+            auto const ri = reg_index( r );
+            if( imm <= 0x7F )
+            {
+                this->m_buf.push_back( 0x83 );
+                this->m_buf.push_back( this->modrm( 3, 1, ri ) );
+                this->m_buf.push_back( static_cast< uint8_t >( imm ) );
+            }
+            else
+            {
+                if( r == reg32::EAX )
+                {
+                    this->m_buf.push_back( 0x0D );
+                }
+                else
+                {
+                    this->m_buf.push_back( 0x81 );
+                    this->m_buf.push_back( this->modrm( 3, 1, ri ) );
+                }
+                this->push_le32( imm );
+            }
+            return *this;
+        }
+
+        /* NOT reg32 (F7 /2) */
+        x86& not_reg( reg32 r )
+        {
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 2, reg_index( r ) ) );
+            return *this;
+        }
+
+        /* NEG reg32 (F7 /3) */
+        x86& neg_reg( reg32 r )
+        {
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 3, reg_index( r ) ) );
+            return *this;
+        }
+
+        /* SHL reg32, imm8 (C1 /4) */
+        x86& shl_reg_imm( reg32 r, uint8_t imm )
+        {
+            this->m_buf.push_back( 0xC1 );
+            this->m_buf.push_back( this->modrm( 3, 4, reg_index( r ) ) );
+            this->m_buf.push_back( imm );
+            return *this;
+        }
+
+        /* SHL reg32, CL (D3 /4) */
+        x86& shl_reg_cl( reg32 r )
+        {
+            this->m_buf.push_back( 0xD3 );
+            this->m_buf.push_back( this->modrm( 3, 4, reg_index( r ) ) );
+            return *this;
+        }
+
+        /* SHR reg32, imm8 (C1 /5) */
+        x86& shr_reg_imm( reg32 r, uint8_t imm )
+        {
+            this->m_buf.push_back( 0xC1 );
+            this->m_buf.push_back( this->modrm( 3, 5, reg_index( r ) ) );
+            this->m_buf.push_back( imm );
+            return *this;
+        }
+
+        /* SHR reg32, CL (D3 /5) */
+        x86& shr_reg_cl( reg32 r )
+        {
+            this->m_buf.push_back( 0xD3 );
+            this->m_buf.push_back( this->modrm( 3, 5, reg_index( r ) ) );
+            return *this;
+        }
+
+        /* SAR reg32, imm8 (C1 /7) */
+        x86& sar_reg_imm( reg32 r, uint8_t imm )
+        {
+            this->m_buf.push_back( 0xC1 );
+            this->m_buf.push_back( this->modrm( 3, 7, reg_index( r ) ) );
+            this->m_buf.push_back( imm );
+            return *this;
+        }
+
+        /* SAR reg32, CL (D3 /7) */
+        x86& sar_reg_cl( reg32 r )
+        {
+            this->m_buf.push_back( 0xD3 );
+            this->m_buf.push_back( this->modrm( 3, 7, reg_index( r ) ) );
+            return *this;
+        }
+
+        /* ROL reg32, imm8 (C1 /0) */
+        x86& rol_reg_imm( reg32 r, uint8_t imm )
+        {
+            this->m_buf.push_back( 0xC1 );
+            this->m_buf.push_back( this->modrm( 3, 0, reg_index( r ) ) );
+            this->m_buf.push_back( imm );
+            return *this;
+        }
+
+        /* ROR reg32, imm8 (C1 /1) */
+        x86& ror_reg_imm( reg32 r, uint8_t imm )
+        {
+            this->m_buf.push_back( 0xC1 );
+            this->m_buf.push_back( this->modrm( 3, 1, reg_index( r ) ) );
+            this->m_buf.push_back( imm );
+            return *this;
+        }
+
+        /* MUL reg32 — unsigned multiply EDX:EAX = EAX * r (F7 /4) */
+        x86& mul_reg( reg32 r )
+        {
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 4, reg_index( r ) ) );
+            return *this;
+        }
+
+        /* IMUL reg32 — signed multiply EDX:EAX = EAX * r (F7 /5) */
+        x86& imul_reg( reg32 r )
+        {
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 5, reg_index( r ) ) );
+            return *this;
+        }
+
+        /* IMUL reg32, reg32 — two-operand signed multiply (0F AF) */
+        x86& imul_reg_reg( reg32 dst, reg32 src )
+        {
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xAF );
+            this->m_buf.push_back( this->modrm( 3, reg_index( dst ), reg_index( src ) ) );
+            return *this;
+        }
+
+        /* IMUL reg32, imm32 — reg = reg * imm (69 /r) */
+        x86& imul_reg_imm( reg32 r, int32_t imm )
+        {
+            auto const ri = reg_index( r );
+            if( imm >= -128 && imm <= 127 )
+            {
+                this->m_buf.push_back( 0x6B );
+                this->m_buf.push_back( this->modrm( 3, ri, ri ) );
+                this->m_buf.push_back( static_cast< uint8_t >( imm ) );
+            }
+            else
+            {
+                this->m_buf.push_back( 0x69 );
+                this->m_buf.push_back( this->modrm( 3, ri, ri ) );
+                this->push_le32( static_cast< uint32_t >( imm ) );
+            }
+            return *this;
+        }
+
+        /* DIV reg32 — unsigned divide EDX:EAX / r (F7 /6) */
+        x86& div_reg( reg32 r )
+        {
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 6, reg_index( r ) ) );
+            return *this;
+        }
+
+        /* IDIV reg32 — signed divide EDX:EAX / r (F7 /7) */
+        x86& idiv_reg( reg32 r )
+        {
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 7, reg_index( r ) ) );
+            return *this;
+        }
+
+        /* INC reg32 (40+r) */
+        x86& inc_reg( reg32 r )
+        {
+            this->m_buf.push_back( 0x40 + reg_index( r ) );
+            return *this;
+        }
+
+        /* DEC reg32 (48+r) */
+        x86& dec_reg( reg32 r )
+        {
+            this->m_buf.push_back( 0x48 + reg_index( r ) );
+            return *this;
+        }
+
+        /* XCHG reg32, reg32 (87 or 90+r short form for EAX) */
+        x86& xchg_reg_reg( reg32 dst, reg32 src )
+        {
+            if( dst == reg32::EAX )
+            {
+                this->m_buf.push_back( 0x90 + reg_index( src ) );
+            }
+            else if( src == reg32::EAX )
+            {
+                this->m_buf.push_back( 0x90 + reg_index( dst ) );
+            }
+            else
+            {
+                this->m_buf.push_back( 0x87 );
+                this->m_buf.push_back( this->modrm( 3, reg_index( src ), reg_index( dst ) ) );
+            }
+            return *this;
+        }
+
+        /* CDQ — sign-extend EAX into EDX:EAX (99) */
+        x86& cdq()
+        {
+            this->m_buf.push_back( 0x99 );
+            return *this;
+        }
+
+        /* MOVZX reg32, reg8 (0F B6) */
+        x86& movzx_reg_reg8( reg32 dst, reg32 src )
+        {
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xB6 );
+            this->m_buf.push_back( this->modrm( 3, reg_index( dst ), reg_index( src ) ) );
+            return *this;
+        }
+
+        /* MOVZX reg32, reg16 (0F B7) */
+        x86& movzx_reg_reg16( reg32 dst, reg32 src )
+        {
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xB7 );
+            this->m_buf.push_back( this->modrm( 3, reg_index( dst ), reg_index( src ) ) );
+            return *this;
+        }
+
+        /* MOVSX reg32, reg8 (0F BE) */
+        x86& movsx_reg_reg8( reg32 dst, reg32 src )
+        {
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xBE );
+            this->m_buf.push_back( this->modrm( 3, reg_index( dst ), reg_index( src ) ) );
+            return *this;
+        }
+
+        /* MOVSX reg32, reg16 (0F BF) */
+        x86& movsx_reg_reg16( reg32 dst, reg32 src )
+        {
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xBF );
+            this->m_buf.push_back( this->modrm( 3, reg_index( dst ), reg_index( src ) ) );
+            return *this;
+        }
+
+        /* BSWAP reg32 (0F C8+r) */
+        x86& bswap_reg( reg32 r )
+        {
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xC8 + reg_index( r ) );
+            return *this;
+        }
+
+        /* LEA reg32, [reg32 + disp32] (8D mod=2) */
+        x86& lea_reg_disp( reg32 dst, reg32 base, int32_t disp )
+        {
+            auto const di = reg_index( dst );
+            auto const bi = reg_index( base );
+            this->m_buf.push_back( 0x8D );
+            if( ( bi & 7 ) == 4 )
+            {
+                /* ESP: need SIB byte */
+                this->m_buf.push_back( this->modrm( 2, di, bi ) );
+                this->m_buf.push_back( 0x24 );
+            }
+            else
+            {
+                this->m_buf.push_back( this->modrm( 2, di, bi ) );
+            }
+            this->push_le32( static_cast< uint32_t >( disp ) );
+            return *this;
+        }
+
+        /* ------- SSE instructions ------- */
+
+    private:
+        /* Emit SSE register-to-register: [prefix] 0F op ModRM(3,dst,src) */
+        void emit_sse_rr( uint8_t prefix, uint8_t op, uint8_t dst, uint8_t src )
+        {
+            if( prefix ) this->m_buf.push_back( prefix );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( op );
+            this->m_buf.push_back( this->modrm( 3, dst, src ) );
+        }
+
+        /* Emit SSE register + [memory]: [prefix] 0F op ModRM+SIB/disp */
+        void emit_sse_rm( uint8_t prefix, uint8_t op, uint8_t xmm_field, uint8_t base )
+        {
+            if( prefix ) this->m_buf.push_back( prefix );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( op );
+            this->emit_modrm_indirect( xmm_field, base );
+        }
+
+    public:
+        /* --- Movement --- */
+
+        /* MOVAPS xmm, xmm (0F 28) */
+        x86& movaps_xmm_xmm( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x28, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MOVAPS xmm, [reg32] (0F 28) */
+        x86& movaps_xmm_mem( xmm32 dst, reg32 base )
+        {
+            emit_sse_rm( 0, 0x28, reg_index( dst ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVAPS [reg32], xmm (0F 29) */
+        x86& movaps_mem_xmm( reg32 base, xmm32 src )
+        {
+            emit_sse_rm( 0, 0x29, reg_index( src ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVUPS xmm, xmm (0F 10) */
+        x86& movups_xmm_xmm( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x10, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MOVUPS xmm, [reg32] (0F 10) */
+        x86& movups_xmm_mem( xmm32 dst, reg32 base )
+        {
+            emit_sse_rm( 0, 0x10, reg_index( dst ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVUPS [reg32], xmm (0F 11) */
+        x86& movups_mem_xmm( reg32 base, xmm32 src )
+        {
+            emit_sse_rm( 0, 0x11, reg_index( src ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVSS xmm, xmm (F3 0F 10) */
+        x86& movss_xmm_xmm( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF3, 0x10, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MOVSS xmm, [reg32] (F3 0F 10) */
+        x86& movss_xmm_mem( xmm32 dst, reg32 base )
+        {
+            emit_sse_rm( 0xF3, 0x10, reg_index( dst ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVSS [reg32], xmm (F3 0F 11) */
+        x86& movss_mem_xmm( reg32 base, xmm32 src )
+        {
+            emit_sse_rm( 0xF3, 0x11, reg_index( src ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVSD xmm, xmm (F2 0F 10) */
+        x86& movsd_xmm_xmm( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF2, 0x10, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MOVSD xmm, [reg32] (F2 0F 10) */
+        x86& movsd_xmm_mem( xmm32 dst, reg32 base )
+        {
+            emit_sse_rm( 0xF2, 0x10, reg_index( dst ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVSD [reg32], xmm (F2 0F 11) */
+        x86& movsd_mem_xmm( reg32 base, xmm32 src )
+        {
+            emit_sse_rm( 0xF2, 0x11, reg_index( src ), reg_index( base ) );
+            return *this;
+        }
+
+        /* --- Scalar float arithmetic (F3 prefix) --- */
+
+        /* ADDSS xmm, xmm (F3 0F 58) */
+        x86& addss( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF3, 0x58, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* SUBSS xmm, xmm (F3 0F 5C) */
+        x86& subss( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF3, 0x5C, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MULSS xmm, xmm (F3 0F 59) */
+        x86& mulss( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF3, 0x59, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* DIVSS xmm, xmm (F3 0F 5E) */
+        x86& divss( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF3, 0x5E, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* --- Scalar double arithmetic (F2 prefix) --- */
+
+        /* ADDSD xmm, xmm (F2 0F 58) */
+        x86& addsd( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF2, 0x58, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* SUBSD xmm, xmm (F2 0F 5C) */
+        x86& subsd( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF2, 0x5C, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MULSD xmm, xmm (F2 0F 59) */
+        x86& mulsd( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF2, 0x59, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* DIVSD xmm, xmm (F2 0F 5E) */
+        x86& divsd( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF2, 0x5E, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* --- Packed float arithmetic (no prefix) --- */
+
+        /* ADDPS xmm, xmm (0F 58) */
+        x86& addps( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x58, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* SUBPS xmm, xmm (0F 5C) */
+        x86& subps( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x5C, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MULPS xmm, xmm (0F 59) */
+        x86& mulps( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x59, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* DIVPS xmm, xmm (0F 5E) */
+        x86& divps( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x5E, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* --- Packed bitwise (no prefix) --- */
+
+        /* XORPS xmm, xmm (0F 57) */
+        x86& xorps( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x57, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* ORPS xmm, xmm (0F 56) */
+        x86& orps( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x56, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* ANDPS xmm, xmm (0F 54) */
+        x86& andps( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x54, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* --- Compare --- */
+
+        /* COMISS xmm, xmm (0F 2F) */
+        x86& comiss( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x2F, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* UCOMISS xmm, xmm (0F 2E) */
+        x86& ucomiss( xmm32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0, 0x2E, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* --- Conversions --- */
+
+        /* CVTSI2SS xmm, reg32 (F3 0F 2A) */
+        x86& cvtsi2ss( xmm32 dst, reg32 src )
+        {
+            emit_sse_rr( 0xF3, 0x2A, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* CVTSS2SI reg32, xmm (F3 0F 2D) */
+        x86& cvtss2si( reg32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF3, 0x2D, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* CVTSI2SD xmm, reg32 (F2 0F 2A) */
+        x86& cvtsi2sd( xmm32 dst, reg32 src )
+        {
+            emit_sse_rr( 0xF2, 0x2A, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* CVTSD2SI reg32, xmm (F2 0F 2D) */
+        x86& cvtsd2si( reg32 dst, xmm32 src )
+        {
+            emit_sse_rr( 0xF2, 0x2D, reg_index( dst ), reg_index( src ) );
             return *this;
         }
     };
@@ -684,22 +1272,7 @@ namespace shellcode
             auto const si = reg_index( src );
             this->m_buf.push_back( rex_w( 0, si, bi ) );
             this->m_buf.push_back( 0x89 );
-            if( ( bi & 7 ) == 5 )
-            {
-                /* RBP/R13: mod=0 rm=5 encodes [RIP+disp32], use mod=1 disp8=0 */
-                this->m_buf.push_back( this->modrm( 1, si & 7, bi & 7 ) );
-                this->m_buf.push_back( 0x00 );
-            }
-            else if( ( bi & 7 ) == 4 )
-            {
-                /* RSP/R12: mod=0 rm=4 encodes SIB follows, emit SIB 0x24 */
-                this->m_buf.push_back( this->modrm( 0, si & 7, bi & 7 ) );
-                this->m_buf.push_back( 0x24 );
-            }
-            else
-            {
-                this->m_buf.push_back( this->modrm( 0, si & 7, bi & 7 ) );
-            }
+            this->emit_modrm_indirect( si, bi );
             return *this;
         }
 
@@ -710,22 +1283,7 @@ namespace shellcode
             auto const bi = reg_index( base );
             this->m_buf.push_back( rex_w( 0, di, bi ) );
             this->m_buf.push_back( 0x8B );
-            if( ( bi & 7 ) == 5 )
-            {
-                /* RBP/R13: mod=0 rm=5 encodes [RIP+disp32], use mod=1 disp8=0 */
-                this->m_buf.push_back( this->modrm( 1, di & 7, bi & 7 ) );
-                this->m_buf.push_back( 0x00 );
-            }
-            else if( ( bi & 7 ) == 4 )
-            {
-                /* RSP/R12: mod=0 rm=4 encodes SIB follows, emit SIB 0x24 */
-                this->m_buf.push_back( this->modrm( 0, di & 7, bi & 7 ) );
-                this->m_buf.push_back( 0x24 );
-            }
-            else
-            {
-                this->m_buf.push_back( this->modrm( 0, di & 7, bi & 7 ) );
-            }
+            this->emit_modrm_indirect( di, bi );
             return *this;
         }
 
@@ -840,6 +1398,415 @@ namespace shellcode
             return *this;
         }
 
+        /* ------- Arithmetic / logic instructions ------- */
+
+        /* AND reg64, reg64 */
+        x64& and_reg_reg( reg64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( rex_w( 0, si, di ) );
+            this->m_buf.push_back( 0x21 );
+            this->m_buf.push_back( this->modrm( 3, si & 7, di & 7 ) );
+            return *this;
+        }
+
+        /* AND reg64, imm32 (sign-extended) */
+        x64& and_reg_imm( reg64 r, int32_t imm )
+        {
+            auto const ri = reg_index( r );
+            if( imm >= -128 && imm <= 127 )
+            {
+                this->m_buf.push_back( rex_w( 0, 0, ri ) );
+                this->m_buf.push_back( 0x83 );
+                this->m_buf.push_back( this->modrm( 3, 4, ri & 7 ) );
+                this->m_buf.push_back( static_cast< uint8_t >( imm ) );
+            }
+            else
+            {
+                this->m_buf.push_back( rex_w( 0, 0, ri ) );
+                if( ( ri & 7 ) == 0 && r < reg64::R8 )
+                {
+                    this->m_buf.push_back( 0x25 );
+                }
+                else
+                {
+                    this->m_buf.push_back( 0x81 );
+                    this->m_buf.push_back( this->modrm( 3, 4, ri & 7 ) );
+                }
+                this->push_le32( static_cast< uint32_t >( imm ) );
+            }
+            return *this;
+        }
+
+        /* OR reg64, reg64 */
+        x64& or_reg_reg( reg64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( rex_w( 0, si, di ) );
+            this->m_buf.push_back( 0x09 );
+            this->m_buf.push_back( this->modrm( 3, si & 7, di & 7 ) );
+            return *this;
+        }
+
+        /* OR reg64, imm32 (sign-extended) */
+        x64& or_reg_imm( reg64 r, int32_t imm )
+        {
+            auto const ri = reg_index( r );
+            if( imm >= -128 && imm <= 127 )
+            {
+                this->m_buf.push_back( rex_w( 0, 0, ri ) );
+                this->m_buf.push_back( 0x83 );
+                this->m_buf.push_back( this->modrm( 3, 1, ri & 7 ) );
+                this->m_buf.push_back( static_cast< uint8_t >( imm ) );
+            }
+            else
+            {
+                this->m_buf.push_back( rex_w( 0, 0, ri ) );
+                if( ( ri & 7 ) == 0 && r < reg64::R8 )
+                {
+                    this->m_buf.push_back( 0x0D );
+                }
+                else
+                {
+                    this->m_buf.push_back( 0x81 );
+                    this->m_buf.push_back( this->modrm( 3, 1, ri & 7 ) );
+                }
+                this->push_le32( static_cast< uint32_t >( imm ) );
+            }
+            return *this;
+        }
+
+        /* NOT reg64 (REX.W + F7 /2) */
+        x64& not_reg( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 2, ri & 7 ) );
+            return *this;
+        }
+
+        /* NEG reg64 (REX.W + F7 /3) */
+        x64& neg_reg( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 3, ri & 7 ) );
+            return *this;
+        }
+
+        /* SHL reg64, imm8 (REX.W + C1 /4) */
+        x64& shl_reg_imm( reg64 r, uint8_t imm )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xC1 );
+            this->m_buf.push_back( this->modrm( 3, 4, ri & 7 ) );
+            this->m_buf.push_back( imm );
+            return *this;
+        }
+
+        /* SHL reg64, CL (REX.W + D3 /4) */
+        x64& shl_reg_cl( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xD3 );
+            this->m_buf.push_back( this->modrm( 3, 4, ri & 7 ) );
+            return *this;
+        }
+
+        /* SHR reg64, imm8 (REX.W + C1 /5) */
+        x64& shr_reg_imm( reg64 r, uint8_t imm )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xC1 );
+            this->m_buf.push_back( this->modrm( 3, 5, ri & 7 ) );
+            this->m_buf.push_back( imm );
+            return *this;
+        }
+
+        /* SHR reg64, CL (REX.W + D3 /5) */
+        x64& shr_reg_cl( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xD3 );
+            this->m_buf.push_back( this->modrm( 3, 5, ri & 7 ) );
+            return *this;
+        }
+
+        /* SAR reg64, imm8 (REX.W + C1 /7) */
+        x64& sar_reg_imm( reg64 r, uint8_t imm )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xC1 );
+            this->m_buf.push_back( this->modrm( 3, 7, ri & 7 ) );
+            this->m_buf.push_back( imm );
+            return *this;
+        }
+
+        /* SAR reg64, CL (REX.W + D3 /7) */
+        x64& sar_reg_cl( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xD3 );
+            this->m_buf.push_back( this->modrm( 3, 7, ri & 7 ) );
+            return *this;
+        }
+
+        /* ROL reg64, imm8 (REX.W + C1 /0) */
+        x64& rol_reg_imm( reg64 r, uint8_t imm )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xC1 );
+            this->m_buf.push_back( this->modrm( 3, 0, ri & 7 ) );
+            this->m_buf.push_back( imm );
+            return *this;
+        }
+
+        /* ROR reg64, imm8 (REX.W + C1 /1) */
+        x64& ror_reg_imm( reg64 r, uint8_t imm )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xC1 );
+            this->m_buf.push_back( this->modrm( 3, 1, ri & 7 ) );
+            this->m_buf.push_back( imm );
+            return *this;
+        }
+
+        /* MUL reg64 — unsigned multiply RDX:RAX = RAX * r (REX.W + F7 /4) */
+        x64& mul_reg( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 4, ri & 7 ) );
+            return *this;
+        }
+
+        /* IMUL reg64 — signed multiply RDX:RAX = RAX * r (REX.W + F7 /5) */
+        x64& imul_reg( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 5, ri & 7 ) );
+            return *this;
+        }
+
+        /* IMUL reg64, reg64 — two-operand signed multiply (REX.W + 0F AF) */
+        x64& imul_reg_reg( reg64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( rex_w( 0, di, si ) );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xAF );
+            this->m_buf.push_back( this->modrm( 3, di & 7, si & 7 ) );
+            return *this;
+        }
+
+        /* IMUL reg64, imm32 — reg = reg * imm (REX.W + 69 /r) */
+        x64& imul_reg_imm( reg64 r, int32_t imm )
+        {
+            auto const ri = reg_index( r );
+            if( imm >= -128 && imm <= 127 )
+            {
+                this->m_buf.push_back( rex_w( 0, ri, ri ) );
+                this->m_buf.push_back( 0x6B );
+                this->m_buf.push_back( this->modrm( 3, ri & 7, ri & 7 ) );
+                this->m_buf.push_back( static_cast< uint8_t >( imm ) );
+            }
+            else
+            {
+                this->m_buf.push_back( rex_w( 0, ri, ri ) );
+                this->m_buf.push_back( 0x69 );
+                this->m_buf.push_back( this->modrm( 3, ri & 7, ri & 7 ) );
+                this->push_le32( static_cast< uint32_t >( imm ) );
+            }
+            return *this;
+        }
+
+        /* DIV reg64 — unsigned divide RDX:RAX / r (REX.W + F7 /6) */
+        x64& div_reg( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 6, ri & 7 ) );
+            return *this;
+        }
+
+        /* IDIV reg64 — signed divide RDX:RAX / r (REX.W + F7 /7) */
+        x64& idiv_reg( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xF7 );
+            this->m_buf.push_back( this->modrm( 3, 7, ri & 7 ) );
+            return *this;
+        }
+
+        /* INC reg64 (REX.W + FF /0) — cannot use 40+r in x64 (REX prefix range) */
+        x64& inc_reg( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xFF );
+            this->m_buf.push_back( this->modrm( 3, 0, ri & 7 ) );
+            return *this;
+        }
+
+        /* DEC reg64 (REX.W + FF /1) — cannot use 48+r in x64 (REX prefix range) */
+        x64& dec_reg( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0xFF );
+            this->m_buf.push_back( this->modrm( 3, 1, ri & 7 ) );
+            return *this;
+        }
+
+        /* XCHG reg64, reg64 (REX.W + 87 or 90+r short form for RAX) */
+        x64& xchg_reg_reg( reg64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            if( dst == reg64::RAX && src != reg64::RAX )
+            {
+                this->m_buf.push_back( rex_w( 0, 0, si ) );
+                this->m_buf.push_back( 0x90 + ( si & 7 ) );
+            }
+            else if( src == reg64::RAX && dst != reg64::RAX )
+            {
+                this->m_buf.push_back( rex_w( 0, 0, di ) );
+                this->m_buf.push_back( 0x90 + ( di & 7 ) );
+            }
+            else
+            {
+                this->m_buf.push_back( rex_w( 0, si, di ) );
+                this->m_buf.push_back( 0x87 );
+                this->m_buf.push_back( this->modrm( 3, si & 7, di & 7 ) );
+            }
+            return *this;
+        }
+
+        /* CQO — sign-extend RAX into RDX:RAX (REX.W + 99) */
+        x64& cqo()
+        {
+            this->m_buf.push_back( 0x48 );
+            this->m_buf.push_back( 0x99 );
+            return *this;
+        }
+
+        /* CDQ — sign-extend EAX into EDX:EAX (99, no REX.W) */
+        x64& cdq()
+        {
+            this->m_buf.push_back( 0x99 );
+            return *this;
+        }
+
+        /* MOVSXD reg64, reg32 — sign-extend 32-bit to 64-bit (REX.W + 63) */
+        x64& movsxd( reg64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( rex_w( 0, di, si ) );
+            this->m_buf.push_back( 0x63 );
+            this->m_buf.push_back( this->modrm( 3, di & 7, si & 7 ) );
+            return *this;
+        }
+
+        /* MOVZX reg64, reg8 (REX.W + 0F B6) */
+        x64& movzx_reg_reg8( reg64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( rex_w( 0, di, si ) );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xB6 );
+            this->m_buf.push_back( this->modrm( 3, di & 7, si & 7 ) );
+            return *this;
+        }
+
+        /* MOVZX reg64, reg16 (REX.W + 0F B7) */
+        x64& movzx_reg_reg16( reg64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( rex_w( 0, di, si ) );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xB7 );
+            this->m_buf.push_back( this->modrm( 3, di & 7, si & 7 ) );
+            return *this;
+        }
+
+        /* MOVSX reg64, reg8 (REX.W + 0F BE) */
+        x64& movsx_reg_reg8( reg64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( rex_w( 0, di, si ) );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xBE );
+            this->m_buf.push_back( this->modrm( 3, di & 7, si & 7 ) );
+            return *this;
+        }
+
+        /* MOVSX reg64, reg16 (REX.W + 0F BF) */
+        x64& movsx_reg_reg16( reg64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( rex_w( 0, di, si ) );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xBF );
+            this->m_buf.push_back( this->modrm( 3, di & 7, si & 7 ) );
+            return *this;
+        }
+
+        /* BSWAP reg64 (REX.W + 0F C8+r) */
+        x64& bswap_reg( reg64 r )
+        {
+            auto const ri = reg_index( r );
+            this->m_buf.push_back( rex_w( 0, 0, ri ) );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0xC8 + ( ri & 7 ) );
+            return *this;
+        }
+
+        /* LEA reg64, [reg64 + disp32] (REX.W + 8D mod=2) */
+        x64& lea_reg_disp( reg64 dst, reg64 base, int32_t disp )
+        {
+            auto const di = reg_index( dst );
+            auto const bi = reg_index( base );
+            this->m_buf.push_back( rex_w( 0, di, bi ) );
+            this->m_buf.push_back( 0x8D );
+            if( ( bi & 7 ) == 4 )
+            {
+                /* RSP/R12: need SIB byte */
+                this->m_buf.push_back( this->modrm( 2, di & 7, bi & 7 ) );
+                this->m_buf.push_back( 0x24 );
+            }
+            else
+            {
+                this->m_buf.push_back( this->modrm( 2, di & 7, bi & 7 ) );
+            }
+            this->push_le32( static_cast< uint32_t >( disp ) );
+            return *this;
+        }
+
+        /* ------- SSE instructions ------- */
+
     private:
         /* REX.W prefix: W=1, R=reg>>3, X=0, B=rm>>3 */
         static constexpr uint8_t rex_w( uint8_t x, uint8_t reg, uint8_t rm )
@@ -861,6 +1828,311 @@ namespace shellcode
         {
             this->push_le32( static_cast< uint32_t >( v ) );
             this->push_le32( static_cast< uint32_t >( v >> 32 ) );
+        }
+
+        /* REX byte for SSE (no W bit): only R and B for extended registers */
+        static constexpr uint8_t rex_sse( uint8_t reg, uint8_t rm )
+        {
+            return 0x40 | ( ( reg >> 3 ) << 2 ) | ( rm >> 3 );
+        }
+
+        /* Emit REX for SSE if any operand uses an extended register (index >= 8) */
+        void emit_rex_sse( uint8_t reg, uint8_t rm )
+        {
+            if( reg >= 8 || rm >= 8 )
+            {
+                this->m_buf.push_back( rex_sse( reg, rm ) );
+            }
+        }
+
+        /* Emit SSE reg-to-reg: [prefix] [REX] 0F op ModRM(3,dst,src) */
+        void emit_sse_rr( uint8_t prefix, uint8_t op, uint8_t dst, uint8_t src )
+        {
+            if( prefix ) this->m_buf.push_back( prefix );
+            emit_rex_sse( dst, src );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( op );
+            this->m_buf.push_back( this->modrm( 3, dst & 7, src & 7 ) );
+        }
+
+        /* Emit SSE register + [memory]: [prefix] [REX] 0F op ModRM+SIB/disp */
+        void emit_sse_rm( uint8_t prefix, uint8_t op, uint8_t xmm_field, uint8_t base )
+        {
+            if( prefix ) this->m_buf.push_back( prefix );
+            emit_rex_sse( xmm_field, base );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( op );
+            this->emit_modrm_indirect( xmm_field, base );
+        }
+
+    public:
+        /* --- Movement --- */
+
+        /* MOVAPS xmm, xmm (0F 28) */
+        x64& movaps_xmm_xmm( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x28, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MOVAPS xmm, [reg64] (0F 28) */
+        x64& movaps_xmm_mem( xmm64 dst, reg64 base )
+        {
+            emit_sse_rm( 0, 0x28, reg_index( dst ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVAPS [reg64], xmm (0F 29) */
+        x64& movaps_mem_xmm( reg64 base, xmm64 src )
+        {
+            emit_sse_rm( 0, 0x29, reg_index( src ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVUPS xmm, xmm (0F 10) */
+        x64& movups_xmm_xmm( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x10, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MOVUPS xmm, [reg64] (0F 10) */
+        x64& movups_xmm_mem( xmm64 dst, reg64 base )
+        {
+            emit_sse_rm( 0, 0x10, reg_index( dst ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVUPS [reg64], xmm (0F 11) */
+        x64& movups_mem_xmm( reg64 base, xmm64 src )
+        {
+            emit_sse_rm( 0, 0x11, reg_index( src ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVSS xmm, xmm (F3 0F 10) */
+        x64& movss_xmm_xmm( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0xF3, 0x10, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MOVSS xmm, [reg64] (F3 0F 10) */
+        x64& movss_xmm_mem( xmm64 dst, reg64 base )
+        {
+            emit_sse_rm( 0xF3, 0x10, reg_index( dst ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVSS [reg64], xmm (F3 0F 11) */
+        x64& movss_mem_xmm( reg64 base, xmm64 src )
+        {
+            emit_sse_rm( 0xF3, 0x11, reg_index( src ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVSD xmm, xmm (F2 0F 10) */
+        x64& movsd_xmm_xmm( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0xF2, 0x10, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MOVSD xmm, [reg64] (F2 0F 10) */
+        x64& movsd_xmm_mem( xmm64 dst, reg64 base )
+        {
+            emit_sse_rm( 0xF2, 0x10, reg_index( dst ), reg_index( base ) );
+            return *this;
+        }
+
+        /* MOVSD [reg64], xmm (F2 0F 11) */
+        x64& movsd_mem_xmm( reg64 base, xmm64 src )
+        {
+            emit_sse_rm( 0xF2, 0x11, reg_index( src ), reg_index( base ) );
+            return *this;
+        }
+
+        /* --- Scalar float arithmetic (F3 prefix) --- */
+
+        /* ADDSS xmm, xmm (F3 0F 58) */
+        x64& addss( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0xF3, 0x58, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* SUBSS xmm, xmm (F3 0F 5C) */
+        x64& subss( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0xF3, 0x5C, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MULSS xmm, xmm (F3 0F 59) */
+        x64& mulss( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0xF3, 0x59, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* DIVSS xmm, xmm (F3 0F 5E) */
+        x64& divss( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0xF3, 0x5E, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* --- Scalar double arithmetic (F2 prefix) --- */
+
+        /* ADDSD xmm, xmm (F2 0F 58) */
+        x64& addsd( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0xF2, 0x58, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* SUBSD xmm, xmm (F2 0F 5C) */
+        x64& subsd( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0xF2, 0x5C, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MULSD xmm, xmm (F2 0F 59) */
+        x64& mulsd( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0xF2, 0x59, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* DIVSD xmm, xmm (F2 0F 5E) */
+        x64& divsd( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0xF2, 0x5E, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* --- Packed float arithmetic (no prefix) --- */
+
+        /* ADDPS xmm, xmm (0F 58) */
+        x64& addps( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x58, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* SUBPS xmm, xmm (0F 5C) */
+        x64& subps( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x5C, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* MULPS xmm, xmm (0F 59) */
+        x64& mulps( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x59, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* DIVPS xmm, xmm (0F 5E) */
+        x64& divps( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x5E, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* --- Packed bitwise (no prefix) --- */
+
+        /* XORPS xmm, xmm (0F 57) */
+        x64& xorps( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x57, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* ORPS xmm, xmm (0F 56) */
+        x64& orps( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x56, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* ANDPS xmm, xmm (0F 54) */
+        x64& andps( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x54, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* --- Compare --- */
+
+        /* COMISS xmm, xmm (0F 2F) */
+        x64& comiss( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x2F, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* UCOMISS xmm, xmm (0F 2E) */
+        x64& ucomiss( xmm64 dst, xmm64 src )
+        {
+            emit_sse_rr( 0, 0x2E, reg_index( dst ), reg_index( src ) );
+            return *this;
+        }
+
+        /* --- Conversions (manually encoded for REX.W with 64-bit GPR) --- */
+
+        /* CVTSI2SS xmm, reg64 (F3 REX.W 0F 2A) */
+        x64& cvtsi2ss( xmm64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( 0xF3 );
+            this->m_buf.push_back( rex_w( 0, di, si ) );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0x2A );
+            this->m_buf.push_back( this->modrm( 3, di & 7, si & 7 ) );
+            return *this;
+        }
+
+        /* CVTSS2SI reg64, xmm (F3 REX.W 0F 2D) */
+        x64& cvtss2si( reg64 dst, xmm64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( 0xF3 );
+            this->m_buf.push_back( rex_w( 0, di, si ) );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0x2D );
+            this->m_buf.push_back( this->modrm( 3, di & 7, si & 7 ) );
+            return *this;
+        }
+
+        /* CVTSI2SD xmm, reg64 (F2 REX.W 0F 2A) */
+        x64& cvtsi2sd( xmm64 dst, reg64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( 0xF2 );
+            this->m_buf.push_back( rex_w( 0, di, si ) );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0x2A );
+            this->m_buf.push_back( this->modrm( 3, di & 7, si & 7 ) );
+            return *this;
+        }
+
+        /* CVTSD2SI reg64, xmm (F2 REX.W 0F 2D) */
+        x64& cvtsd2si( reg64 dst, xmm64 src )
+        {
+            auto const di = reg_index( dst );
+            auto const si = reg_index( src );
+            this->m_buf.push_back( 0xF2 );
+            this->m_buf.push_back( rex_w( 0, di, si ) );
+            this->m_buf.push_back( 0x0F );
+            this->m_buf.push_back( 0x2D );
+            this->m_buf.push_back( this->modrm( 3, di & 7, si & 7 ) );
+            return *this;
         }
     };
 

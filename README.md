@@ -1380,11 +1380,25 @@ The framework contains the following modules:
 
     Uses a CRTP base class (`builder_base<Derived>`) that provides shared functionality (labels, jumps, conditional branches, raw bytes) while `shellcode::x86` and `shellcode::x64` add architecture-specific instructions. Registers use scoped enums (`shellcode::reg32`, `shellcode::reg64`) for type safety.
 
+    Registers use scoped enums for type safety: `shellcode::reg32`, `shellcode::reg64` for GPRs, and `shellcode::xmm32`, `shellcode::xmm64` for SSE registers. XMM register types are architecture-specific (xmm32 has XMM0-7, xmm64 has XMM0-15) to prevent passing extended registers to x86 methods at compile time.
+
     **Shared instructions** (both x86 and x64): `nop`, `int3`, `ret`, `raw` (byte emission), `build`, `offset`, `patch`, labels (`make_label`, `bind`, `jmp_to`, `call_to`), conditional jumps (`je`, `jne`, `jz`, `jnz`, `jb`, `jae`, `ja`, `jbe`, `jl`, `jge`, `jg`, `jle`, `js`, `jns`).
 
-    **x86-only**: `push_reg`, `pop_reg`, `pushad`/`popad`, `pushfd`/`popfd`, `mov_reg_imm`, `mov_reg_reg`, `mov_mem_reg`, `mov_reg_mem`, `xor_reg_reg`, `add_reg_imm`, `sub_reg_imm`, `call_reg`, `jmp_reg`, `call_rel`, `jmp_rel`, `push_imm`, `test_reg_reg`, `cmp_reg_imm`, `cmp_reg_reg`, `sysenter`, `int_2e`.
+    **x86 data movement**: `push_reg`, `pop_reg`, `pushad`/`popad`, `pushfd`/`popfd`, `mov_reg_imm`, `mov_reg_reg`, `mov_mem_reg`, `mov_reg_mem`, `push_imm`, `xchg_reg_reg`, `lea_reg_disp`, `movzx_reg_reg8`, `movzx_reg_reg16`, `movsx_reg_reg8`, `movsx_reg_reg16`, `bswap_reg`.
 
-    **x64-only**: `push_reg`, `pop_reg`, `pushfq`/`popfq`, `mov_reg_imm` (64-bit), `mov_reg_imm32` (sign-extended), `mov_reg_reg`, `mov_mem_reg`, `mov_reg_mem`, `xor_reg_reg`, `add_reg_imm`, `sub_reg_imm`, `call_reg`, `jmp_reg`, `call_rel`, `jmp_rel`, `push_imm` (sign-extended), `lea_rip`, `sub_rsp_imm8`/`add_rsp_imm8`, `test_reg_reg`, `cmp_reg_imm`, `cmp_reg_reg`, `syscall`.
+    **x86 arithmetic/logic**: `add_reg_imm`, `sub_reg_imm`, `and_reg_reg`, `and_reg_imm`, `or_reg_reg`, `or_reg_imm`, `xor_reg_reg`, `not_reg`, `neg_reg`, `shl_reg_imm`, `shl_reg_cl`, `shr_reg_imm`, `shr_reg_cl`, `sar_reg_imm`, `sar_reg_cl`, `rol_reg_imm`, `ror_reg_imm`, `mul_reg`, `imul_reg`, `imul_reg_reg`, `imul_reg_imm`, `div_reg`, `idiv_reg`, `inc_reg`, `dec_reg`, `cdq`, `test_reg_reg`, `cmp_reg_imm`, `cmp_reg_reg`.
+
+    **x86 control flow**: `call_reg`, `jmp_reg`, `call_rel`, `jmp_rel`, `sysenter`, `int_2e`.
+
+    **x86 SSE** (using `xmm32` registers): `movaps_xmm_xmm`/`_xmm_mem`/`_mem_xmm`, `movups_*`, `movss_*`, `movsd_*`, `addss`/`subss`/`mulss`/`divss`, `addsd`/`subsd`/`mulsd`/`divsd`, `addps`/`subps`/`mulps`/`divps`, `xorps`/`orps`/`andps`, `comiss`/`ucomiss`, `cvtsi2ss`/`cvtss2si`/`cvtsi2sd`/`cvtsd2si`.
+
+    **x64 data movement**: `push_reg`, `pop_reg`, `pushfq`/`popfq`, `mov_reg_imm` (64-bit), `mov_reg_imm32` (sign-extended), `mov_reg_reg`, `mov_mem_reg`, `mov_reg_mem`, `push_imm` (sign-extended), `lea_rip`, `lea_reg_disp`, `xchg_reg_reg`, `movsxd`, `movzx_reg_reg8`/`16`, `movsx_reg_reg8`/`16`, `bswap_reg`.
+
+    **x64 arithmetic/logic**: `add_reg_imm`, `sub_reg_imm`, `sub_rsp_imm8`/`add_rsp_imm8`, `and_reg_reg`, `and_reg_imm`, `or_reg_reg`, `or_reg_imm`, `xor_reg_reg`, `not_reg`, `neg_reg`, `shl_reg_imm`, `shl_reg_cl`, `shr_reg_imm`, `shr_reg_cl`, `sar_reg_imm`, `sar_reg_cl`, `rol_reg_imm`, `ror_reg_imm`, `mul_reg`, `imul_reg`, `imul_reg_reg`, `imul_reg_imm`, `div_reg`, `idiv_reg`, `inc_reg`, `dec_reg`, `cqo`, `cdq`, `test_reg_reg`, `cmp_reg_imm`, `cmp_reg_reg`.
+
+    **x64 control flow**: `call_reg`, `jmp_reg`, `call_rel`, `jmp_rel`, `syscall`.
+
+    **x64 SSE** (using `xmm64` registers, with REX prefix support for XMM8-15): `movaps_xmm_xmm`/`_xmm_mem`/`_mem_xmm`, `movups_*`, `movss_*`, `movsd_*`, `addss`/`subss`/`mulss`/`divss`, `addsd`/`subsd`/`mulsd`/`divsd`, `addps`/`subps`/`mulps`/`divps`, `xorps`/`orps`/`andps`, `comiss`/`ucomiss`, `cvtsi2ss`/`cvtss2si`/`cvtsi2sd`/`cvtsd2si` (with REX.W for 64-bit GPR operands).
 
     - ### **How to build x86 shellcode**
         Use `shellcode::x86` with scoped register enums (`shellcode::reg32::EAX`, `shellcode::reg32::ECX`, etc.). Chain calls and finish with `.build()` to get a `std::vector<uint8_t>`.
