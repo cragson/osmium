@@ -63,7 +63,7 @@ jobs:
         working-directory: Driver/Shared
         run: |
           echo Compiling struct_validate.c (compile-time ABI checks)...
-          cl.exe /nologo /W4 /WX /c /TC struct_validate.c
+          cl.exe /nologo /W4 /WX /c /TC /std:c11 struct_validate.c
           if errorlevel 1 exit /b 1
           echo All struct layout assertions passed.
 
