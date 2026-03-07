@@ -89,6 +89,9 @@
     <ClCompile Include="eprocess.c" />
     <ClCompile Include="stealth.c" />
     <ClCompile Include="forensics.c" />
+    <ClCompile Include="tamper.c" />
+    <ClCompile Include="injection.c" />
+    <ClCompile Include="antiedr.c" />
   </ItemGroup>
 
   <!-- Header files -->
@@ -100,6 +103,9 @@
     <ClInclude Include="forensics.h" />
     <ClInclude Include="ntstructs.h" />
     <ClInclude Include="..\Shared\ioctl.h" />
+    <ClInclude Include="tamper.h" />
+    <ClInclude Include="injection.h" />
+    <ClInclude Include="antiedr.h" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

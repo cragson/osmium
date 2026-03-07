@@ -41,6 +41,9 @@
 #define IOCTL_REMOVE_CALLBACK   CTL_CODE(FILE_DEVICE_NETWORK, 0xF72, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
 #define IOCTL_STRIP_HANDLES     CTL_CODE(FILE_DEVICE_NETWORK, 0xD93, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
 #define IOCTL_SCAN_ARTIFACTS    CTL_CODE(FILE_DEVICE_NETWORK, 0xEB4, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define IOCTL_PROCESS_TAMPER    CTL_CODE(FILE_DEVICE_NETWORK, 0x8A6, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
+#define IOCTL_INJECT            CTL_CODE(FILE_DEVICE_NETWORK, 0x8D3, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
+#define IOCTL_SUPPRESS_TELEMETRY CTL_CODE(FILE_DEVICE_NETWORK, 0x91F, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
 
 /* -----------------------------------------------------------------------
  * Request / Response structures
@@ -106,7 +109,22 @@ typedef struct _HIDE_THREADS_RESPONSE
 #define CALLBACK_TYPE_PROCESS  0
 #define CALLBACK_TYPE_THREAD   1
 #define CALLBACK_TYPE_IMAGE    2
+#define CALLBACK_TYPE_REGISTRY 3
 #define MAX_CALLBACK_ENTRIES   64
+
+/* IOCTL_PROCESS_TAMPER sub-commands */
+#define TAMPER_SPOOF_PPID          0
+#define TAMPER_BYPASS_PPL          1
+#define TAMPER_TOGGLE_PRIVILEGE    2
+
+/* IOCTL_INJECT sub-commands */
+#define INJECT_CALLBACK_TABLE      0
+#define INJECT_KERNEL_APC          1
+#define INJECT_DLL                 2
+
+/* IOCTL_SUPPRESS_TELEMETRY sub-commands */
+#define SUPPRESS_REDIRECT_CALLBACKS  0
+#define SUPPRESS_ETW_TI              1
 
 typedef struct _CALLBACK_ENTRY
 {
@@ -211,5 +229,71 @@ typedef struct _ELEVATE_TOKEN_RESPONSE
 {
 	LONG    Status;
 } ELEVATE_TOKEN_RESPONSE, *PELEVATE_TOKEN_RESPONSE;
+
+/* IOCTL_PROCESS_TAMPER */
+typedef struct _PROCESS_TAMPER_REQUEST
+{
+	ULONG   SubCommand;
+	ULONG   Reserved;
+	ULONG64 ProcessId;
+	union {
+		struct { ULONG64 NewParentPid; }                   SpoofPpid;
+		struct { ULONG64 PrivilegeLuid; ULONG Enable; }   TogglePrivilege;
+		/* TAMPER_BYPASS_PPL needs no additional fields */
+	} Params;
+} PROCESS_TAMPER_REQUEST, *PPROCESS_TAMPER_REQUEST;
+
+typedef struct _PROCESS_TAMPER_RESPONSE
+{
+	LONG    Status;
+	ULONG   Reserved;
+	ULONG64 PreviousValue;
+} PROCESS_TAMPER_RESPONSE, *PPROCESS_TAMPER_RESPONSE;
+
+/* IOCTL_INJECT */
+typedef struct _INJECT_REQUEST
+{
+	ULONG   SubCommand;
+	ULONG   Reserved;
+	ULONG64 ProcessId;
+	union {
+		struct {
+			ULONG   TableIndex;
+			ULONG   Reserved;
+			ULONG64 NewFunction;
+		} CallbackTable;
+		struct {
+			ULONG64 ThreadId;
+			ULONG64 ApcRoutine;
+			ULONG64 ApcArgument;
+		} KernelApc;
+		struct {
+			WCHAR DllPath[MAX_MODULE_NAME_LENGTH];
+		} DllInject;
+	} Params;
+} INJECT_REQUEST, *PINJECT_REQUEST;
+
+typedef struct _INJECT_RESPONSE
+{
+	LONG    Status;
+	ULONG   Reserved;
+	ULONG64 AllocatedAddress;
+	ULONG64 PreviousValue;
+} INJECT_RESPONSE, *PINJECT_RESPONSE;
+
+/* IOCTL_SUPPRESS_TELEMETRY */
+typedef struct _SUPPRESS_TELEMETRY_REQUEST
+{
+	ULONG   SubCommand;
+	ULONG   Enable;      /* 1 = suppress, 0 = restore */
+	ULONG64 ProcessId;   /* for callback redirection: PID to hide */
+} SUPPRESS_TELEMETRY_REQUEST, *PSUPPRESS_TELEMETRY_REQUEST;
+
+typedef struct _SUPPRESS_TELEMETRY_RESPONSE
+{
+	LONG    Status;
+	ULONG   Reserved;
+	ULONG64 PreviousValue;
+} SUPPRESS_TELEMETRY_RESPONSE, *PSUPPRESS_TELEMETRY_RESPONSE;
 
 #pragma pack(pop)

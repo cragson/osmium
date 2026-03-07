@@ -46,6 +46,69 @@ jobs:
             Driver/build/${{ matrix.platform }}/${{ matrix.configuration }}/*.sys
           if-no-files-found: error
 
+  validate:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Validate IOCTL struct layout
+        shell: cmd
+        working-directory: Driver/Shared
+        run: |
+          echo Compiling struct_validate.c (compile-time ABI checks)...
+          cl.exe /nologo /W4 /WX /c /TC struct_validate.c
+          if errorlevel 1 exit /b 1
+          echo All struct layout assertions passed.
+
+      - name: Check vcxproj includes all source files
+        shell: pwsh
+        run: |
+          $kernelDir = "Driver/Kernel"
+          $vcxprojPath = "$kernelDir/driver.vcxproj"
+
+          # Get all .c files on disk
+          $diskFiles = Get-ChildItem -Path $kernelDir -Filter "*.c" |
+                       Select-Object -ExpandProperty Name |
+                       Sort-Object
+
+          # Parse ClCompile entries from vcxproj
+          [xml]$proj = Get-Content $vcxprojPath
+          $ns = @{ ms = "http://schemas.microsoft.com/developer/msbuild/2003" }
+          $projFiles = $proj |
+                       Select-Xml -XPath "//ms:ClCompile/@Include" -Namespace $ns |
+                       ForEach-Object { Split-Path $_.Node.Value -Leaf } |
+                       Sort-Object
+
+          # Find .c files missing from vcxproj
+          $missing = $diskFiles | Where-Object { $_ -notin $projFiles }
+
+          if ($missing) {
+            Write-Host "ERROR: The following .c files are not in driver.vcxproj:" -ForegroundColor Red
+            $missing | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+            exit 1
+          }
+
+          Write-Host "OK: All $($diskFiles.Count) .c files are listed in driver.vcxproj." -ForegroundColor Green
+
+      - name: Run static analysis (informational)
+        shell: cmd
+        continue-on-error: true
+        working-directory: Driver/Kernel
+        run: |
+          echo Running /analyze on driver sources (non-blocking)...
+          for %%f in (*.c) do (
+            echo Analyzing %%f ...
+            cl.exe /nologo /W4 /analyze /analyze:only /c /TC /I..\Shared /D_NTDDK_ /DNTDDI_VERSION=0x0A000000 %%f 2>&1
+          )
+          echo Static analysis complete (results are informational only).
+
   build-examples:
     runs-on: windows-2022
 
@@ -76,7 +139,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [ build, build-examples ]
+    needs: [ build, validate, build-examples ]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/feature/kernel-driver'
     permissions:
