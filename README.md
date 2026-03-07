@@ -1378,26 +1378,34 @@ The framework contains the following modules:
 - ### **Shellcode builder**
     Header-only shellcode builder (`Memory/ShellcodeBuilder/shellcode_builder.hpp`) that generates x86 and x64 machine code using a fluent API. No external dependencies — all instruction encoding is handled inline, so capstone/keystone are not needed.
 
-    Supported instructions: `push_reg`, `pop_reg`, `mov_reg_imm`, `mov_reg_reg`, `mov_mem_reg`, `mov_reg_mem`, `xor_reg_reg`, `add_reg_imm`, `sub_reg_imm`, `call_reg`, `jmp_reg`, `call_rel`, `jmp_rel`, `nop`, `int3`, `ret`, `push_imm` (x86), `pushad`/`popad` (x86), `pushfd`/`popfd` (x86), `lea_rip` (x64), `sub_rsp_imm8`/`add_rsp_imm8` (x64), and `raw` byte emission.
+    Uses a CRTP base class (`builder_base<Derived>`) that provides shared functionality (labels, jumps, conditional branches, raw bytes) while `shellcode::x86` and `shellcode::x64` add architecture-specific instructions. Registers use scoped enums (`shellcode::reg32`, `shellcode::reg64`) for type safety.
+
+    **Shared instructions** (both x86 and x64): `nop`, `int3`, `ret`, `raw` (byte emission), `build`, `offset`, `patch`, labels (`make_label`, `bind`, `jmp_to`, `call_to`), conditional jumps (`je`, `jne`, `jz`, `jnz`, `jb`, `jae`, `ja`, `jbe`, `jl`, `jge`, `jg`, `jle`, `js`, `jns`).
+
+    **x86-only**: `push_reg`, `pop_reg`, `pushad`/`popad`, `pushfd`/`popfd`, `mov_reg_imm`, `mov_reg_reg`, `mov_mem_reg`, `mov_reg_mem`, `xor_reg_reg`, `add_reg_imm`, `sub_reg_imm`, `call_reg`, `jmp_reg`, `call_rel`, `jmp_rel`, `push_imm`, `test_reg_reg`, `cmp_reg_imm`, `cmp_reg_reg`, `sysenter`, `int_2e`.
+
+    **x64-only**: `push_reg`, `pop_reg`, `pushfq`/`popfq`, `mov_reg_imm` (64-bit), `mov_reg_imm32` (sign-extended), `mov_reg_reg`, `mov_mem_reg`, `mov_reg_mem`, `xor_reg_reg`, `add_reg_imm`, `sub_reg_imm`, `call_reg`, `jmp_reg`, `call_rel`, `jmp_rel`, `push_imm` (sign-extended), `lea_rip`, `sub_rsp_imm8`/`add_rsp_imm8`, `test_reg_reg`, `cmp_reg_imm`, `cmp_reg_reg`, `syscall`.
 
     - ### **How to build x86 shellcode**
-        Use `shellcode::x86` with the x86 register enum (`shellcode::EAX`, `shellcode::ECX`, etc.). Chain calls and finish with `.build()` to get a `std::vector<uint8_t>`.
+        Use `shellcode::x86` with scoped register enums (`shellcode::reg32::EAX`, `shellcode::reg32::ECX`, etc.). Chain calls and finish with `.build()` to get a `std::vector<uint8_t>`.
 
         ```cpp
         #include "osmium/Memory/ShellcodeBuilder/shellcode_builder.hpp"
 
         void x86_shellcode_example()
         {
+            using enum shellcode::reg32;
+
             // Build shellcode that calls a function at 0xDEADBEEF with an argument
             auto code = shellcode::x86()
-                .pushad()                                   // save all registers
-                .pushfd()                                   // save flags
-                .push_imm( 0x42 )                           // push argument
-                .mov_reg_imm( shellcode::EAX, 0xDEADBEEF ) // mov eax, <func_addr>
-                .call_reg( shellcode::EAX )                 // call eax
-                .add_reg_imm( shellcode::ESP, 4 )           // clean up stack
-                .popfd()                                    // restore flags
-                .popad()                                    // restore registers
+                .pushad()                            // save all registers
+                .pushfd()                            // save flags
+                .push_imm( 0x42 )                    // push argument
+                .mov_reg_imm( EAX, 0xDEADBEEF )     // mov eax, <func_addr>
+                .call_reg( EAX )                     // call eax
+                .add_reg_imm( ESP, 4 )               // clean up stack
+                .popfd()                             // restore flags
+                .popad()                             // restore registers
                 .ret()
                 .build();
 
@@ -1407,26 +1415,60 @@ The framework contains the following modules:
         ```
 
     - ### **How to build x64 shellcode**
-        Use `shellcode::x64` with the x64 register enum (`shellcode::RAX`, `shellcode::R8`, etc.). REX prefixes for R8-R15 are emitted automatically.
+        Use `shellcode::x64` with scoped register enums (`shellcode::reg64::RAX`, `shellcode::reg64::R8`, etc.). REX prefixes for R8-R15 are emitted automatically.
 
         ```cpp
         #include "osmium/Memory/ShellcodeBuilder/shellcode_builder.hpp"
 
         void x64_shellcode_example()
         {
+            using enum shellcode::reg64;
+
             // Build shellcode that calls a function pointer with x64 calling convention
             auto code = shellcode::x64()
-                .push_reg( shellcode::RBX )                          // preserve rbx
-                .sub_rsp_imm8( 0x28 )                                // shadow space (32 bytes + alignment)
-                .mov_reg_imm( shellcode::RCX, 0x1337 )              // first arg
-                .mov_reg_imm( shellcode::RAX, 0x00007FF600001000 )  // function address
-                .call_reg( shellcode::RAX )                          // call rax
-                .add_rsp_imm8( 0x28 )                                // restore stack
-                .pop_reg( shellcode::RBX )                           // restore rbx
+                .push_reg( RBX )                                 // preserve rbx
+                .sub_rsp_imm8( 0x28 )                            // shadow space (32 bytes + alignment)
+                .mov_reg_imm( RCX, 0x1337 )                      // first arg
+                .mov_reg_imm( RAX, 0x00007FF600001000 )          // function address
+                .call_reg( RAX )                                  // call rax
+                .add_rsp_imm8( 0x28 )                            // restore stack
+                .pop_reg( RBX )                                   // restore rbx
                 .ret()
                 .build();
 
             printf( "[+] Generated %llu bytes of x64 shellcode\n", code.size() );
+        }
+        ```
+
+    - ### **How to use labels and conditional jumps**
+        Labels support forward references — create a label with `make_label()`, reference it in jumps, then `bind()` it later. Displacements are resolved at `build()` time.
+
+        ```cpp
+        #include "osmium/Memory/ShellcodeBuilder/shellcode_builder.hpp"
+
+        void label_example()
+        {
+            using enum shellcode::reg64;
+
+            shellcode::x64 builder;
+            auto skip = builder.make_label();
+            auto loop = builder.make_label();
+
+            auto code = builder
+                .xor_reg_reg( RCX, RCX )             // rcx = 0
+                .bind( loop )                         // loop:
+                .add_reg_imm( RCX, 1 )               //   rcx++
+                .cmp_reg_imm( RCX, 10 )              //   cmp rcx, 10
+                .jl( loop )                           //   if rcx < 10, goto loop
+                .test_reg_reg( RAX, RAX )             //   test rax, rax
+                .jnz( skip )                          //   if rax != 0, skip ret
+                .ret()                                //   return
+                .bind( skip )                         // skip:
+                .nop()
+                .ret()
+                .build();
+
+            printf( "[+] Generated %llu bytes with labels\n", code.size() );
         }
         ```
 
