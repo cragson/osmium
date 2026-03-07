@@ -86,6 +86,10 @@
         -   [How to enumerate and remove kernel callbacks](#how-to-enumerate-and-remove-kernel-callbacks)
         -   [How to strip process handles](#how-to-strip-process-handles)
         -   [How to scan for forensic artifacts](#how-to-scan-for-forensic-artifacts)
+        -   [How to enumerate and remove registry callbacks](#how-to-enumerate-and-remove-registry-callbacks)
+        -   [How to tamper with process attributes](#how-to-tamper-with-process-attributes)
+        -   [How to inject code into a process](#how-to-inject-code-into-a-process)
+        -   [How to suppress EDR telemetry](#how-to-suppress-edr-telemetry)
         -   [A full driver interface example](#a-full-driver-interface-example)
     - [**Basic overlay implementation**](#basic-overlay-implementation)
         -   [How to setup your overlay](#how-to-setup-your-overlay)
@@ -211,6 +215,11 @@ The framework contains the following modules:
     * Shared IOCTL definitions (`Driver/Shared/ioctl.h`) are used by both the kernel driver and the user-mode wrapper.
     * The user-mode wrapper (`Memory/DriverInterface/driver_interface.hpp`) provides the same `read<T>`/`write<T>` template API as the `process` class, making it easy to switch between backends.
     * Supports both x86 and x64 target processes, including WoW64 module enumeration.
+    * **Stealth module** (`stealth.c/h`): Callback enumeration/removal, thread hiding from `NtQuerySystemInformation`, handle stripping.
+    * **Forensics module** (`forensics.c/h`): 15-source forensic artifact scanner (Prefetch, ShimCache, AmCache, UserAssist, BAM, MUICache, SRUM, and more).
+    * **Tamper module** (`tamper.c/h`): Parent PID spoofing, PPL bypass, token privilege toggling via direct EPROCESS manipulation.
+    * **Injection module** (`injection.c/h`): KernelCallbackTable hijack, kernel APC injection, kernel-assisted DLL injection.
+    * **Anti-EDR module** (`antiedr.c/h`): Ps*Notify callback redirection with PID filtering, ETW Threat Intelligence provider suppression, registry callback enumeration and removal.
     * See [Kernel driver interface implementation](#kernel-driver-interface-implementation) for examples.
 - Overlay
     * Before I say anything about that, I need to give proper credits to **Icew0lf83**! I came in contact with him and we shared our ideas and thoughts on a project, so I asked him if I am allowed to rewrite his DirectX9 Overlay and Renderer for my own purposes and he gave me the permissions to do it.
@@ -1422,6 +1431,18 @@ The framework contains the following modules:
             - `Driver/Kernel/memory.h`
             - `Driver/Kernel/process.c`
             - `Driver/Kernel/process.h`
+            - `Driver/Kernel/eprocess.c`
+            - `Driver/Kernel/eprocess.h`
+            - `Driver/Kernel/stealth.c`
+            - `Driver/Kernel/stealth.h`
+            - `Driver/Kernel/forensics.c`
+            - `Driver/Kernel/forensics.h`
+            - `Driver/Kernel/tamper.c`
+            - `Driver/Kernel/tamper.h`
+            - `Driver/Kernel/injection.c`
+            - `Driver/Kernel/injection.h`
+            - `Driver/Kernel/antiedr.c`
+            - `Driver/Kernel/antiedr.h`
             - `Driver/Kernel/ntstructs.h`
             - `Driver/Shared/ioctl.h`
         5. Open **Project** → **Properties** and configure the following:
@@ -1895,6 +1916,167 @@ The framework contains the following modules:
             }
         }
         ```
+
+    - ### **How to enumerate and remove registry callbacks**
+        In addition to process, thread, and image load callbacks, the driver can also enumerate and remove **registry callbacks** registered via `CmRegisterCallbackEx`. EDRs use these to monitor registry operations (key creation, value writes, deletions, etc.).
+
+        The driver resolves `CmpCallbackListHead` by scanning `CmUnRegisterCallback` for a LEA instruction referencing the internal list head. Each entry in the list is a `CM_CALLBACK_CONTEXT_BLOCK` containing the callback function pointer and a `LARGE_INTEGER` cookie used for removal via `CmUnRegisterCallback`.
+
+        Use the same `enum_callbacks()` and `remove_callback()` methods with `CALLBACK_TYPE_REGISTRY` (type 3):
+
+        ```cpp
+        #include "osmium/Memory/DriverInterface/driver_interface.hpp"
+
+        void enumerate_registry_callbacks()
+        {
+            const auto driver = std::make_unique< driver_interface >();
+
+            if( !driver->is_connected() )
+                return;
+
+            // Enumerate all registry callbacks
+            if( auto callbacks = driver->enum_callbacks( CALLBACK_TYPE_REGISTRY ) )
+            {
+                printf( "[+] Found %llu registry callbacks:\n", callbacks->size() );
+
+                for( const auto& cb : *callbacks )
+                    printf( "    [%u] 0x%llX\n", cb.index, cb.address );
+            }
+
+            // Remove a specific registry callback by index
+            if( driver->remove_callback( CALLBACK_TYPE_REGISTRY, 0 ) )
+                printf( "[+] Removed registry callback at index 0.\n" );
+        }
+        ```
+
+        **MITRE ATT&CK:** T1112 — Modify Registry (defensive evasion by removing monitoring)
+
+    - ### **How to tamper with process attributes**
+        The `IOCTL_PROCESS_TAMPER` IOCTL provides three sub-commands for modifying process attributes from kernel mode by directly manipulating EPROCESS structures. The driver resolves the relevant EPROCESS field offsets dynamically at load time by scanning known values in the System process.
+
+        **Sub-commands:**
+
+        | Sub-command | Constant | Description | MITRE ATT&CK |
+        |---|---|---|---|
+        | **Spoof Parent PID** | `TAMPER_SPOOF_PPID` | Overwrites `EPROCESS.InheritedFromUniqueProcessId` to make a process appear as if it was spawned by a different parent | T1134.004 |
+        | **Bypass PPL** | `TAMPER_BYPASS_PPL` | Zeros the `PS_PROTECTION` byte in EPROCESS, removing Protected Process Light restrictions | T1548 |
+        | **Toggle Token Privilege** | `TAMPER_TOGGLE_PRIVILEGE` | Enables or disables a specific privilege (by LUID) in the process token's `SEP_TOKEN_PRIVILEGES` | T1134.001 |
+
+        All three sub-commands return the previous value of the modified field in `PROCESS_TAMPER_RESPONSE.PreviousValue`, allowing the caller to restore the original state later.
+
+        **Request/Response structures** (defined in `Driver/Shared/ioctl.h`):
+
+        ```c
+        // Request — 32 bytes
+        typedef struct _PROCESS_TAMPER_REQUEST
+        {
+            ULONG   SubCommand;     // TAMPER_SPOOF_PPID, TAMPER_BYPASS_PPL, or TAMPER_TOGGLE_PRIVILEGE
+            ULONG   Reserved;
+            ULONG64 ProcessId;      // Target process PID
+            union {
+                struct { ULONG64 NewParentPid; }                   SpoofPpid;
+                struct { ULONG64 PrivilegeLuid; ULONG Enable; }   TogglePrivilege;
+            } Params;
+        } PROCESS_TAMPER_REQUEST;
+
+        // Response — 16 bytes
+        typedef struct _PROCESS_TAMPER_RESPONSE
+        {
+            LONG    Status;
+            ULONG   Reserved;
+            ULONG64 PreviousValue;  // Previous value of the modified field
+        } PROCESS_TAMPER_RESPONSE;
+        ```
+
+        **Note:** The kernel-side implementations are currently scaffolded (return `STATUS_NOT_IMPLEMENTED`). The EPROCESS offset resolution and struct manipulation logic is fully documented in the source code for educational reference. Usermode `driver_interface` wrapper methods will be added in a future update.
+
+    - ### **How to inject code into a process**
+        The `IOCTL_INJECT` IOCTL provides three sub-commands for kernel-assisted code injection into a target process.
+
+        **Sub-commands:**
+
+        | Sub-command | Constant | Description | MITRE ATT&CK |
+        |---|---|---|---|
+        | **KernelCallbackTable Hijack** | `INJECT_CALLBACK_TABLE` | Overwrites an entry in the PEB's `KernelCallbackTable` (offset 0x58), redirecting win32k.sys user-mode callbacks | T1574.013 |
+        | **Kernel APC Injection** | `INJECT_KERNEL_APC` | Queues a user-mode APC to a target thread via `KeInitializeApc` + `KeInsertQueueApc`. Fires when the thread enters an alertable wait | T1055.004 |
+        | **DLL Injection** | `INJECT_DLL` | Allocates memory in the target process, writes a DLL path, and triggers loading via APC to `LdrLoadDll` | T1055.001 |
+
+        The APC injection path includes a thread-to-process ownership validation (`IoThreadToProcess`) to prevent targeting threads that don't belong to the specified process. The KAPC structure is allocated from `NonPagedPool` with proper cleanup in both the kernel routine (normal delivery) and rundown routine (thread termination).
+
+        **Request/Response structures:**
+
+        ```c
+        // Request — 528 bytes (largest union member: DllInject with WCHAR[256])
+        typedef struct _INJECT_REQUEST
+        {
+            ULONG   SubCommand;     // INJECT_CALLBACK_TABLE, INJECT_KERNEL_APC, or INJECT_DLL
+            ULONG   Reserved;
+            ULONG64 ProcessId;
+            union {
+                struct { ULONG TableIndex; ULONG Reserved; ULONG64 NewFunction; } CallbackTable;
+                struct { ULONG64 ThreadId; ULONG64 ApcRoutine; ULONG64 ApcArgument; } KernelApc;
+                struct { WCHAR DllPath[256]; } DllInject;
+            } Params;
+        } INJECT_REQUEST;
+
+        // Response — 24 bytes
+        typedef struct _INJECT_RESPONSE
+        {
+            LONG    Status;
+            ULONG   Reserved;
+            ULONG64 AllocatedAddress;   // For DLL inject: address of allocated buffer
+            ULONG64 PreviousValue;      // For callback table: previous function pointer
+        } INJECT_RESPONSE;
+        ```
+
+        **Note:** The kernel-side implementations are currently scaffolded (return `STATUS_NOT_IMPLEMENTED`). The injection mechanisms are fully documented in the source for educational reference.
+
+    - ### **How to suppress EDR telemetry**
+        The `IOCTL_SUPPRESS_TELEMETRY` IOCTL provides two sub-commands for disabling kernel-level telemetry sources that EDR products rely on.
+
+        **Sub-commands:**
+
+        | Sub-command | Constant | Description | MITRE ATT&CK |
+        |---|---|---|---|
+        | **Redirect Notify Callbacks** | `SUPPRESS_REDIRECT_CALLBACKS` | Overwrites `Ps*Notify` callback function pointers to redirect them through a filter that suppresses notifications for a specific PID. Uses a one-slot-per-type design to avoid N-squared fan-out | T1562.001 |
+        | **Suppress ETW Threat Intelligence** | `SUPPRESS_ETW_TI` | Zeroes the `ProviderEnableInfo` field in the ETW TI provider's registration structure, disabling all Threat Intelligence telemetry events | T1562.006 |
+
+        Both operations are **data-only modifications** (no executable code is patched), making them HVCI-safe. PatchGuard does not monitor individual callback function pointers or ETW registration structures.
+
+        The callback redirection preserves non-zero callback slots (avoiding the "zeroed callback" detection heuristic) and stores all original function pointers for clean restoration. The driver's `DriverUnload` routine automatically calls `KmRestoreNotifyCallbacks()` and `KmRestoreEtwTi()` to restore original state before unloading.
+
+        **Request/Response structures:**
+
+        ```c
+        // Request — 16 bytes
+        typedef struct _SUPPRESS_TELEMETRY_REQUEST
+        {
+            ULONG   SubCommand;     // SUPPRESS_REDIRECT_CALLBACKS or SUPPRESS_ETW_TI
+            ULONG   Enable;         // 1 = suppress, 0 = restore
+            ULONG64 ProcessId;      // For callback redirection: PID to hide
+        } SUPPRESS_TELEMETRY_REQUEST;
+
+        // Response — 16 bytes
+        typedef struct _SUPPRESS_TELEMETRY_RESPONSE
+        {
+            LONG    Status;
+            ULONG   Reserved;
+            ULONG64 PreviousValue;  // Number of redirected callbacks or previous ETW state
+        } SUPPRESS_TELEMETRY_RESPONSE;
+        ```
+
+        **Note:** The kernel-side implementations are currently scaffolded (return `STATUS_NOT_IMPLEMENTED`). The suppression mechanisms are fully documented in the source for educational reference. Usermode `driver_interface` wrapper methods will be added in a future update.
+
+    - ### **CI validation pipeline**
+        The CI workflow (`.github/workflows/build-driver.yml`) now includes a `validate` job that runs three checks on every push:
+
+        1. **Struct layout validation** — Compiles `Driver/Shared/struct_validate.c` with `cl.exe /W4 /WX /std:c11` to verify all IOCTL request/response struct sizes and field offsets via `_Static_assert`. This catches accidental ABI breaks between the kernel driver and usermode code.
+
+        2. **vcxproj consistency check** — A PowerShell script verifies that every `.c` file in `Driver/Kernel/` is listed as a `<ClCompile>` entry in `driver.vcxproj`. This prevents source files from being accidentally excluded from the build.
+
+        3. **Static analysis (informational)** — Runs `cl.exe /analyze` on all driver sources. Results are non-blocking (`continue-on-error: true`) but provide early warning of potential issues.
+
+        The `release` job depends on all three build jobs (`build`, `validate`, `build-examples`) passing before creating the rolling dev release.
 
     - ### **A full driver interface example**
         Here is a complete example that shows how to use the driver interface from start to finish. This is essentially the driver-backed equivalent of using the `process` class for memory operations.
